@@ -36,6 +36,11 @@ func main() {
 	collectors := []collector.Collector{
 		collector.NewNodeCollector(c),
 		collector.NewNamespaceCollector(c),
+		collector.NewPodCollector(c),
+		collector.NewDeploymentCollector(c),
+		collector.NewServiceCollector(c),
+		collector.NewIngressCollector(c),
+		collector.NewPVCCollector(c),
 	}
 
 	for _, col := range collectors {
