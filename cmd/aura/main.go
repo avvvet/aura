@@ -3,13 +3,13 @@ package main
 import (
 	"context"
 	"flag"
-	"fmt"
 	"log"
 	"time"
 
 	"github.com/avvvet/aura/internal/client"
 	"github.com/avvvet/aura/internal/collector"
 	"github.com/avvvet/aura/internal/model"
+	"github.com/avvvet/aura/internal/renderer"
 )
 
 func main() {
@@ -22,8 +22,6 @@ func main() {
 	if err != nil {
 		log.Fatalf("failed to connect to cluster: %v", err)
 	}
-
-	fmt.Printf("connected to cluster: %s (context: %s)\n", c.ClusterName, c.Context)
 
 	// build snapshot
 	snapshot := &model.ClusterSnapshot{
@@ -46,14 +44,9 @@ func main() {
 		}
 	}
 
-	// print raw results to confirm
-	fmt.Printf("\nNodes (%d):\n", len(snapshot.Nodes))
-	for _, n := range snapshot.Nodes {
-		fmt.Printf("  %s\t%s\t%s\t%s\t%s\n", n.Name, n.Status, n.Roles, n.Version, n.Age)
-	}
-
-	fmt.Printf("\nNamespaces (%d):\n", len(snapshot.Namespaces))
-	for _, ns := range snapshot.Namespaces {
-		fmt.Printf("  %s\t%s\t%s\n", ns.Name, ns.Status, ns.Age)
+	// render
+	r := renderer.NewTableRenderer()
+	if err := r.Render(snapshot); err != nil {
+		log.Fatalf("render error: %v", err)
 	}
 }

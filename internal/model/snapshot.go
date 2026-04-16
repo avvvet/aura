@@ -16,6 +16,8 @@ type ClusterSnapshot struct {
 	Ingresses   []Ingress
 	PVCs        []PVC
 
+	Analysis []string
+
 	CostSignals CostSignals
 }
 
