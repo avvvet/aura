@@ -124,6 +124,8 @@ func detectIssues(s *model.ClusterSnapshot) []Issue {
 		})
 	}
 
+	issues = append(issues, detectSecurityIssues(s)...)
+
 	return issues
 }
 
@@ -137,4 +139,83 @@ func detectResolved(current []Issue, previous []ResolvedIssue) []ResolvedIssue {
 	}
 
 	return resolved
+}
+
+func detectSecurityIssues(s *model.ClusterSnapshot) []Issue {
+	var issues []Issue
+	sec := s.SecuritySignals
+
+	if len(sec.PrivilegedContainers) > 0 {
+		issues = append(issues, Issue{
+			Severity:   "security",
+			Title:      fmt.Sprintf("%d privileged containers detected", len(sec.PrivilegedContainers)),
+			Resource:   "multiple",
+			Namespace:  "cluster",
+			Meta:       strings.Join(sec.PrivilegedContainers, ", "),
+			Command:    "kubectl get pod -o jsonpath='{.spec.containers[*].securityContext}' -A",
+			DetectedAt: time.Now(),
+		})
+	}
+
+	if len(sec.SecretsInEnvVars) > 0 {
+		issues = append(issues, Issue{
+			Severity:   "security",
+			Title:      fmt.Sprintf("%d containers exposing secrets in env vars", len(sec.SecretsInEnvVars)),
+			Resource:   "multiple",
+			Namespace:  "cluster",
+			Meta:       strings.Join(sec.SecretsInEnvVars, ", "),
+			Command:    "kubectl get pod -o jsonpath='{.spec.containers[*].env}' -A | grep -i secret",
+			DetectedAt: time.Now(),
+		})
+	}
+
+	if len(sec.HostNetworkPods) > 0 {
+		issues = append(issues, Issue{
+			Severity:   "security",
+			Title:      fmt.Sprintf("%d pods using host network", len(sec.HostNetworkPods)),
+			Resource:   "multiple",
+			Namespace:  "cluster",
+			Meta:       strings.Join(sec.HostNetworkPods, ", "),
+			Command:    "kubectl get pod --field-selector spec.hostNetwork=true -A",
+			DetectedAt: time.Now(),
+		})
+	}
+
+	if len(sec.IngressesWithoutTLS) > 0 {
+		issues = append(issues, Issue{
+			Severity:   "security",
+			Title:      fmt.Sprintf("%d ingresses without TLS", len(sec.IngressesWithoutTLS)),
+			Resource:   "multiple",
+			Namespace:  "cluster",
+			Meta:       strings.Join(sec.IngressesWithoutTLS, ", "),
+			Command:    "kubectl get ingress -A | grep -v 443",
+			DetectedAt: time.Now(),
+		})
+	}
+
+	if len(sec.NamespacesWithoutNetPol) > 0 {
+		issues = append(issues, Issue{
+			Severity:   "security",
+			Title:      fmt.Sprintf("%d namespaces have no network policy", len(sec.NamespacesWithoutNetPol)),
+			Resource:   "multiple",
+			Namespace:  "cluster",
+			Meta:       strings.Join(sec.NamespacesWithoutNetPol, ", "),
+			Command:    "kubectl get networkpolicy -A",
+			DetectedAt: time.Now(),
+		})
+	}
+
+	if len(sec.LatestImageTags) > 0 {
+		issues = append(issues, Issue{
+			Severity:   "security",
+			Title:      fmt.Sprintf("%d containers using unpinned image tags", len(sec.LatestImageTags)),
+			Resource:   "multiple",
+			Namespace:  "cluster",
+			Meta:       strings.Join(sec.LatestImageTags, ", "),
+			Command:    "kubectl get pod -o jsonpath='{.spec.containers[*].image}' -A",
+			DetectedAt: time.Now(),
+		})
+	}
+
+	return issues
 }

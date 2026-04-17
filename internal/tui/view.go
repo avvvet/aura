@@ -289,22 +289,25 @@ func renderHealthGrid(m Model) string {
 func renderIssues(m Model) string {
 	var critical []Issue
 	var warnings []Issue
+	var security []Issue
 
 	for _, i := range m.issues {
-		if i.Severity == "critical" {
+		switch i.Severity {
+		case "critical":
 			critical = append(critical, i)
-		} else {
+		case "warning":
 			warnings = append(warnings, i)
+		case "security":
+			security = append(security, i)
 		}
 	}
 
 	var b strings.Builder
 
-	// must fix — always show even if zero
-	mustFixCount := fmt.Sprintf("%d critical", len(critical))
+	// must fix — each issue gets own box (critical = most important, deserves space)
 	mustFixTitle := tStyleErr.Render("MUST FIX") +
 		"  " + tStyleDivider.Render(strings.Repeat("─", tWidth()-30)) +
-		"  " + tStyleMuted.Render(mustFixCount)
+		"  " + tStyleMuted.Render(fmt.Sprintf("%d critical", len(critical)))
 	b.WriteString(mustFixTitle + "\n\n")
 
 	if len(critical) == 0 {
@@ -316,23 +319,85 @@ func renderIssues(m Model) string {
 		}
 	}
 
-	// good practice — always show even if zero
-	goodPracticeCount := fmt.Sprintf("%d recommendations", len(warnings))
-	goodPracticeTitle := tStyleWarn.Render("GOOD PRACTICE") +
+	// good practice — single box, list inside
+	goodTitle := tStyleWarn.Render("GOOD PRACTICE") +
 		"  " + tStyleDivider.Render(strings.Repeat("─", tWidth()-36)) +
-		"  " + tStyleMuted.Render(goodPracticeCount)
-	b.WriteString(goodPracticeTitle + "\n\n")
+		"  " + tStyleMuted.Render(fmt.Sprintf("%d recommendations", len(warnings)))
+	b.WriteString(goodTitle + "\n\n")
 
 	if len(warnings) == 0 {
-		b.WriteString(tStyleBoxOk.Render(tStyleOk.Render("✓  no recommendations")) + "\n\n")
+		b.WriteString(tStyleBoxWarn.Render(tStyleOk.Render("✓  no recommendations")) + "\n")
 	} else {
+		var inner strings.Builder
 		for i, issue := range warnings {
-			b.WriteString(renderIssueCard(issue, len(critical)+i+1))
-			b.WriteString("\n")
+			num := tStyleMuted.Render(fmt.Sprintf("%d", i+1))
+			icon := tStyleWarn.Render("▲")
+			title := tStyleWarn.Render(issue.Title)
+			cmd := tStyleBlue.Render(issue.Command)
+			inner.WriteString(fmt.Sprintf("%s  %s  %s\n   %s  %s\n",
+				icon, num, title,
+				tStyleMuted.Render("→"), cmd))
+			if i < len(warnings)-1 {
+				inner.WriteString(tStyleDivider.Render(strings.Repeat("─", tWidth()-12)) + "\n")
+			}
 		}
+		b.WriteString(tStyleBoxWarn.Render(inner.String()))
 	}
+	b.WriteString("\n")
+
+	// security — single box, list inside
+	b.WriteString("\n")
+	secTitle := tStylePurple.Render("SECURITY") +
+		"  " + tStyleDivider.Render(strings.Repeat("─", tWidth()-28)) +
+		"  " + tStyleMuted.Render(fmt.Sprintf("%d findings", len(security)))
+	b.WriteString(secTitle + "\n\n")
+
+	tStyleBoxSec := lipgloss.NewStyle().
+		Border(lipgloss.RoundedBorder()).
+		BorderForeground(lipgloss.Color("#bc8cff33")).
+		Padding(0, 1).
+		Width(tWidth() - 4)
+
+	if len(security) == 0 {
+		b.WriteString(tStyleBoxSec.Render(tStyleOk.Render("✓  no security findings")) + "\n")
+	} else {
+		var inner strings.Builder
+		for i, issue := range security {
+			num := tStyleMuted.Render(fmt.Sprintf("%d", i+1))
+			icon := tStylePurple.Render("⚠")
+			title := tStylePurple.Render(issue.Title)
+			cmd := tStyleBlue.Render(issue.Command)
+			inner.WriteString(fmt.Sprintf("%s  %s  %s\n   %s  %s\n",
+				icon, num, title,
+				tStyleMuted.Render("→"), cmd))
+			if i < len(security)-1 {
+				inner.WriteString(tStyleDivider.Render(strings.Repeat("─", tWidth()-12)) + "\n")
+			}
+		}
+		b.WriteString(tStyleBoxSec.Render(inner.String()))
+	}
+	b.WriteString("\n")
 
 	return b.String()
+}
+
+func renderSecurityCard(issue Issue, num int) string {
+	tStyleBoxSec := lipgloss.NewStyle().
+		Border(lipgloss.RoundedBorder()).
+		BorderForeground(lipgloss.Color("#bc8cff33")).
+		Padding(0, 1).
+		Width(tWidth() - 4)
+
+	icon := tStylePurple.Render("⚠")
+	numStr := tStyleMuted.Render(fmt.Sprintf("%d", num))
+	title := tStylePurple.Render(issue.Title)
+	meta := tStyleMuted.Render(issue.Meta)
+	cmd := tStyleCmdBox.Render(issue.Command)
+
+	content := fmt.Sprintf("%s  %s  %s\n   %s\n   %s",
+		icon, numStr, title, meta, cmd)
+
+	return tStyleBoxSec.Render(content)
 }
 
 func externalSvcs(s *model.ClusterSnapshot) int {

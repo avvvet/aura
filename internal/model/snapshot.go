@@ -16,10 +16,22 @@ type ClusterSnapshot struct {
 	Ingresses   []Ingress
 	PVCs        []PVC
 
-	Analysis []string
+	Analysis        []string
+	SecuritySignals SecuritySignals
+	CostSignals     CostSignals
+	Errors          []string
+}
 
-	CostSignals CostSignals
-	Errors      []string
+// SecuritySignals represents security related findings
+type SecuritySignals struct {
+	PrivilegedContainers    []string
+	ContainersRunningAsRoot []string
+	SecretsInEnvVars        []string
+	HostNetworkPods         []string
+	NoSecurityContext       []string
+	LatestImageTags         []string
+	IngressesWithoutTLS     []string
+	NamespacesWithoutNetPol []string
 }
 
 // Node represents a cluster node and its status

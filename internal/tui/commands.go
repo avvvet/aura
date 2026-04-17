@@ -42,6 +42,7 @@ func probe(c *client.Client) tea.Cmd {
 			collector.NewServiceCollector(c),
 			collector.NewIngressCollector(c),
 			collector.NewPVCCollector(c),
+			collector.NewSecurityCollector(c),
 		}
 
 		for _, col := range collectors {
