@@ -13,8 +13,9 @@ import (
 
 // probeDone is sent when a probe completes
 type probeDone struct {
-	snapshot *model.ClusterSnapshot
-	err      error
+	snapshot   *model.ClusterSnapshot
+	durationMs int64
+	err        error
 }
 
 // tickMsg is sent every second for countdown
@@ -30,6 +31,7 @@ func tick() tea.Cmd {
 // probe runs all collectors and returns the snapshot
 func probe(c *client.Client) tea.Cmd {
 	return func() tea.Msg {
+		start := time.Now()
 		snapshot := model.NewSnapshot(c.ClusterName, c.Context)
 
 		ctx := context.Background()
@@ -47,11 +49,13 @@ func probe(c *client.Client) tea.Cmd {
 
 		for _, col := range collectors {
 			if err := col.Collect(ctx, snapshot); err != nil {
-				// log error but continue — partial data is better than nothing
 				snapshot.Errors = append(snapshot.Errors, err.Error())
 			}
 		}
 
-		return probeDone{snapshot: snapshot}
+		return probeDone{
+			snapshot:   snapshot,
+			durationMs: time.Since(start).Milliseconds(),
+		}
 	}
 }

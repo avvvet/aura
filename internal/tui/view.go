@@ -90,7 +90,7 @@ func tDivider() string {
 	return tStyleDivider.Render(strings.Repeat("─", tWidth()))
 }
 
-func render(m Model) string {
+func renderMainView(m Model) string {
 	var b strings.Builder
 
 	b.WriteString("\n")
@@ -104,9 +104,198 @@ func render(m Model) string {
 	b.WriteString("\n")
 	b.WriteString(renderIssues(m))
 	b.WriteString(renderResolved(m))
+	b.WriteString(renderAnalysisHint(m))
 	b.WriteString(tDivider())
 	b.WriteString("\n")
 	b.WriteString(renderTUIFooter(m))
+
+	return b.String()
+}
+
+func render(m Model) string {
+	if m.viewMode == "analysis" {
+		return renderAnalysisView(m)
+	}
+	return renderMainView(m)
+}
+
+func renderAnalysisHint(m Model) string {
+	var content string
+
+	if m.analyzer == nil {
+		content = tStyleMuted.Render("⚡  run ") +
+			tStyleBlue.Render("aura --setup") +
+			tStyleMuted.Render(" to configure LLM for AI guided fix analysis")
+	} else {
+		content = tStyleOk.Render("⚡  press ") +
+			tStyleBlue.Render("'a'") +
+			tStyleOk.Render(" for AI guided fix analysis") +
+			tStyleMuted.Render("  ·  ") +
+			tStyleMuted.Render(m.analyzer.Name())
+	}
+
+	return lipgloss.NewStyle().
+		Border(lipgloss.RoundedBorder()).
+		BorderForeground(lipgloss.Color("#3fb95033")).
+		Padding(0, 1).
+		Width(tWidth()-4).
+		Render(content) + "\n"
+}
+
+func renderAnalysisView(m Model) string {
+	var b strings.Builder
+
+	b.WriteString("\n")
+
+	// header — same as main view with cluster info
+	brand := tStyleBright.Render("▸  A U R A") +
+		"  " + tStyleOk.Render("ANALYSIS")
+	tagline := lipgloss.NewStyle().Foreground(tColorMuted).Italic(true).Render("the light that guides you through darkness")
+
+	providerName := ""
+	if m.analyzer != nil {
+		providerName = tStyleMuted.Render(m.analyzer.Name())
+	}
+
+	clusterName := tStyleBlue.Render(m.client.ClusterName)
+	ctx := tStyleMuted.Render(m.client.Context)
+	ts := tStyleMuted.Render(time.Now().UTC().Format("2006-01-02  15:04:05 UTC"))
+
+	left := brand + "\n" + tagline
+	right := fmt.Sprintf("cluster: %s\ncontext: %s\n%s  %s",
+		clusterName, ctx, ts, providerName)
+
+	w := tWidth() - 8
+	rw := 55
+	lw := w - rw
+
+	lb := lipgloss.NewStyle().Width(lw).Render(left)
+	rb := lipgloss.NewStyle().Width(rw).Align(lipgloss.Right).Render(right)
+
+	headerContent := lipgloss.JoinHorizontal(lipgloss.Top, lb, rb)
+
+	b.WriteString(lipgloss.NewStyle().
+		Border(lipgloss.RoundedBorder()).
+		BorderForeground(lipgloss.Color("#3fb95066")).
+		Padding(0, 1).
+		Width(tWidth() - 4).
+		Render(headerContent))
+	b.WriteString("\n")
+
+	// analysis content
+	tStyleBoxLLM := lipgloss.NewStyle().
+		Border(lipgloss.RoundedBorder()).
+		BorderForeground(lipgloss.Color("#3fb95066")).
+		Padding(0, 1).
+		Width(tWidth() - 4)
+
+	var inner strings.Builder
+
+	if len(m.issues) == 0 {
+		inner.WriteString(tStyleOk.Render("✓  cluster is healthy — no issues to analyze\n"))
+	} else if m.analyzer == nil {
+		inner.WriteString(tStyleMuted.Render("  no LLM configured — run aura --setup\n"))
+	} else if len(m.guidance) == 0 && len(m.analyzing) > 0 {
+		inner.WriteString(tStyleWarn.Render("⟳  analyzing cluster issues...\n"))
+	} else {
+		for i, issue := range m.issues {
+			var icon string
+			var titleStyle lipgloss.Style
+			switch issue.Severity {
+			case "critical":
+				icon = tStyleErr.Render("!")
+				titleStyle = tStyleErr
+			case "security":
+				icon = tStylePurple.Render("⚠")
+				titleStyle = tStylePurple
+			default:
+				icon = tStyleWarn.Render("▲")
+				titleStyle = tStyleWarn
+			}
+
+			num := tStyleMuted.Render(fmt.Sprintf("%d", i+1))
+
+			g, ok := m.guidance[issue.Title]
+			if !ok {
+				if m.analyzing[issue.Title] {
+					inner.WriteString(fmt.Sprintf("%s  %s  %s  %s\n\n",
+						icon, num,
+						titleStyle.Render(issue.Title),
+						tStyleWarn.Render("⟳ analyzing..."),
+					))
+				} else {
+					inner.WriteString(fmt.Sprintf("%s  %s  %s\n\n",
+						icon, num,
+						titleStyle.Render(issue.Title),
+					))
+				}
+				continue
+			}
+
+			inner.WriteString(fmt.Sprintf("%s  %s  %s\n",
+				icon, num, titleStyle.Render(issue.Title)))
+
+			if g.RootCause != "" {
+				inner.WriteString(fmt.Sprintf("   %s  %s\n",
+					tStyleMuted.Render("WHY:"),
+					tStyleBright.Render(truncate(g.RootCause, 90)),
+				))
+			}
+			if g.FixExplanation != "" {
+				inner.WriteString(fmt.Sprintf("   %s  %s\n",
+					tStyleMuted.Render("ACTION:"),
+					tStyleBright.Render(truncate(g.FixExplanation, 90)),
+				))
+			}
+			if g.Command != "" {
+				inner.WriteString(fmt.Sprintf("   %s  %s\n",
+					tStyleMuted.Render("RUN:"),
+					tStyleBlue.Render(g.Command),
+				))
+			}
+			if g.Risk != "" {
+				inner.WriteString(fmt.Sprintf("   %s  %s\n",
+					tStyleMuted.Render("RISK:"),
+					tStyleWarn.Render(g.Risk),
+				))
+			}
+			if g.Confidence != "" {
+				inner.WriteString(fmt.Sprintf("   %s  %s\n",
+					tStyleMuted.Render("CONFIDENCE:"),
+					confidenceStyle(g.Confidence).Render(g.Confidence),
+				))
+			}
+
+			if i < len(m.issues)-1 {
+				inner.WriteString(tStyleDivider.Render(strings.Repeat("─", tWidth()-10)) + "\n")
+			}
+		}
+	}
+
+	b.WriteString(tStyleBoxLLM.Render(inner.String()))
+	b.WriteString("\n")
+
+	// footer
+	footerLeft := tStyleMuted.Render("press ") +
+		tStyleBlue.Render("'esc'") +
+		tStyleMuted.Render(" to return to main view  ·  ") +
+		tStyleBlue.Render("'a'") +
+		tStyleMuted.Render(" to re-analyze")
+
+	footerRight := tStyleMuted.Render(fmt.Sprintf("probe #%d  ·  ", m.probeCount)) +
+		tStyleOk.Render(fmt.Sprintf("%d issues", len(m.issues)))
+
+	fw := tWidth()
+	frw := 30
+	flw := fw - frw
+
+	flb := lipgloss.NewStyle().Width(flw).Render(footerLeft)
+	frb := lipgloss.NewStyle().Width(frw).Align(lipgloss.Right).Render(footerRight)
+
+	b.WriteString(tDivider())
+	b.WriteString("\n")
+	b.WriteString(lipgloss.JoinHorizontal(lipgloss.Top, flb, frb))
+	b.WriteString("\n")
 
 	return b.String()
 }
@@ -470,11 +659,129 @@ func renderTUIFooter(m Model) string {
 		tStyleMuted.Render(fmt.Sprintf("  ·  %d errors", len(m.errors)))
 
 	w := tWidth()
-	rw := 40
+	rw := 50
 	lw := w - rw
 
 	lb := lipgloss.NewStyle().Width(lw).Render(left)
-	rb := lipgloss.NewStyle().Width(rw).Align(lipgloss.Right).Render(right)
+	rb := lipgloss.NewStyle().Width(rw).Align(lipgloss.Center).Render(right)
 
 	return lipgloss.JoinHorizontal(lipgloss.Top, lb, rb) + "\n"
+}
+
+func renderGuidance(m Model) string {
+	if m.analyzer == nil {
+		// LLM not configured — show subtle prompt
+		hint := tStyleMuted.Render("⚡  press ") +
+			tStyleBlue.Render("'a'") +
+			tStyleMuted.Render(" to analyze issues  ·  run ") +
+			tStyleBlue.Render("aura --setup") +
+			tStyleMuted.Render(" to configure LLM")
+		return lipgloss.NewStyle().
+			Border(lipgloss.RoundedBorder()).
+			BorderForeground(tColorBgGrid).
+			Padding(0, 1).
+			Width(tWidth()-4).
+			Render(hint) + "\n"
+	}
+
+	tStyleBoxLLM := lipgloss.NewStyle().
+		Border(lipgloss.RoundedBorder()).
+		BorderForeground(lipgloss.Color("#3fb95066")).
+		Padding(0, 1).
+		Width(tWidth() - 4)
+
+	// check if anything is being analyzed
+	analyzing := len(m.analyzing) > 0
+
+	title := tStyleOk.Render("⚡  AURA ANALYSIS") +
+		"  " + tStyleMuted.Render(m.analyzer.Name()) +
+		"  " + tStyleDivider.Render(strings.Repeat("─", tWidth()-50))
+
+	if analyzing {
+		title += "  " + tStyleWarn.Render("analyzing...")
+	} else {
+		title += "  " + tStyleMuted.Render("press 'a' to re-analyze")
+	}
+
+	var b strings.Builder
+	b.WriteString(title + "\n\n")
+
+	if len(m.guidance) == 0 && !analyzing {
+		b.WriteString(tStyleMuted.Render("  no analysis yet — will analyze automatically when issues are detected"))
+		return tStyleBoxLLM.Render(b.String()) + "\n"
+	}
+
+	for _, issue := range m.issues {
+		g, ok := m.guidance[issue.Title]
+		if !ok {
+			if m.analyzing[issue.Title] {
+				icon := tStyleWarn.Render("⟳")
+				b.WriteString(fmt.Sprintf("%s  %s  %s\n\n",
+					icon,
+					tStyleWarn.Render(issue.Title),
+					tStyleMuted.Render("analyzing..."),
+				))
+			}
+			continue
+		}
+
+		var icon string
+		var titleStyle lipgloss.Style
+		switch issue.Severity {
+		case "critical":
+			icon = tStyleErr.Render("!")
+			titleStyle = tStyleErr
+		case "security":
+			icon = tStylePurple.Render("⚠")
+			titleStyle = tStylePurple
+		default:
+			icon = tStyleWarn.Render("▲")
+			titleStyle = tStyleWarn
+		}
+
+		b.WriteString(fmt.Sprintf("%s  %s\n", icon, titleStyle.Render(issue.Title)))
+
+		if g.RootCause != "" {
+			b.WriteString(fmt.Sprintf("   %s  %s\n",
+				tStyleMuted.Render("WHY:"),
+				tStyleBright.Render(truncate(g.RootCause, 90)),
+			))
+		}
+		if g.Command != "" {
+			// first line of command only
+			cmdLine := strings.SplitN(g.Command, "\n", 2)[0]
+			b.WriteString(fmt.Sprintf("   %s  %s\n",
+				tStyleMuted.Render("FIX:"),
+				tStyleCmdBox.Render(truncate(cmdLine, 80)),
+			))
+		}
+		if g.Confidence != "" {
+			b.WriteString(fmt.Sprintf("   %s  %s\n",
+				tStyleMuted.Render("CONFIDENCE:"),
+				confidenceStyle(g.Confidence).Render(g.Confidence),
+			))
+		}
+		b.WriteString("\n")
+	}
+
+	return tStyleBoxLLM.Render(b.String()) + "\n"
+}
+
+func confidenceStyle(confidence string) lipgloss.Style {
+	switch confidence {
+	case "high":
+		return tStyleOk
+	case "medium":
+		return tStyleWarn
+	default:
+		return tStyleErr
+	}
+}
+
+func truncate(s string, max int) string {
+	s = strings.ReplaceAll(s, "\n", " ")
+	if len(s) <= max {
+		return s
+	}
+	return s[:max-3] + "..."
 }

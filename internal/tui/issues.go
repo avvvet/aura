@@ -130,10 +130,25 @@ func detectIssues(s *model.ClusterSnapshot) []Issue {
 }
 
 // detectResolved checks which previous issues no longer appear in current issues
-func detectResolved(current []Issue, previous []ResolvedIssue) []ResolvedIssue {
+func detectResolved(current []Issue, previous []ResolvedIssue, prev []Issue) []ResolvedIssue {
 	resolved := previous
 
-	// keep only last 5 resolved issues
+	// find issues that were in prev but not in current
+	currentTitles := make(map[string]bool)
+	for _, c := range current {
+		currentTitles[c.Title] = true
+	}
+
+	for _, p := range prev {
+		if !currentTitles[p.Title] {
+			resolved = append(resolved, ResolvedIssue{
+				Title:      p.Title,
+				ResolvedAt: time.Now(),
+			})
+		}
+	}
+
+	// keep only last 5
 	if len(resolved) > 5 {
 		resolved = resolved[len(resolved)-5:]
 	}
