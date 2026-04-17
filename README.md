@@ -6,7 +6,7 @@
 
 ---
 
-https://github.com/avvvet/aura/blob/main/docs/aura-demo.mp4
+https://github.com/user-attachments/assets/df070b65-13b9-4b96-80ae-914ddaff48ed
 
 ---
 
