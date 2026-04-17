@@ -1,15 +1,15 @@
 package main
 
 import (
-	"context"
 	"flag"
+	"fmt"
 	"log"
-	"time"
+	"os"
+
+	tea "github.com/charmbracelet/bubbletea"
 
 	"github.com/avvvet/aura/internal/client"
-	"github.com/avvvet/aura/internal/collector"
-	"github.com/avvvet/aura/internal/model"
-	"github.com/avvvet/aura/internal/renderer"
+	"github.com/avvvet/aura/internal/tui"
 )
 
 func main() {
@@ -20,38 +20,15 @@ func main() {
 	// build k8s client
 	c, err := client.New(*kubeconfig, *kubecontext)
 	if err != nil {
-		log.Fatalf("failed to connect to cluster: %v", err)
+		fmt.Fprintf(os.Stderr, "failed to connect to cluster: %v\n", err)
+		os.Exit(1)
 	}
 
-	// build snapshot
-	snapshot := &model.ClusterSnapshot{
-		CapturedAt:  time.Now(),
-		ClusterName: c.ClusterName,
-		Context:     c.Context,
-	}
+	// start bubbletea live TUI
+	m := tui.New(c)
+	p := tea.NewProgram(m, tea.WithAltScreen())
 
-	ctx := context.Background()
-
-	// run collectors
-	collectors := []collector.Collector{
-		collector.NewNodeCollector(c),
-		collector.NewNamespaceCollector(c),
-		collector.NewPodCollector(c),
-		collector.NewDeploymentCollector(c),
-		collector.NewServiceCollector(c),
-		collector.NewIngressCollector(c),
-		collector.NewPVCCollector(c),
-	}
-
-	for _, col := range collectors {
-		if err := col.Collect(ctx, snapshot); err != nil {
-			log.Printf("collector error: %v", err)
-		}
-	}
-
-	// render
-	r := renderer.NewTableRenderer()
-	if err := r.Render(snapshot); err != nil {
-		log.Fatalf("render error: %v", err)
+	if _, err := p.Run(); err != nil {
+		log.Fatalf("failed to start aura: %v", err)
 	}
 }

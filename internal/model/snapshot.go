@@ -19,6 +19,7 @@ type ClusterSnapshot struct {
 	Analysis []string
 
 	CostSignals CostSignals
+	Errors      []string
 }
 
 // Node represents a cluster node and its status
@@ -106,4 +107,13 @@ type CostSignals struct {
 	UnattachedPVCs       []string
 	IdleNamespaces       []string
 	OverprovisionedNodes []string
+}
+
+// NewSnapshot creates a new empty ClusterSnapshot
+func NewSnapshot(clusterName, context string) *ClusterSnapshot {
+	return &ClusterSnapshot{
+		CapturedAt:  time.Now(),
+		ClusterName: clusterName,
+		Context:     context,
+	}
 }
