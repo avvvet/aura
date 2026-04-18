@@ -521,11 +521,14 @@ func renderIssues(m Model) string {
 		for i, issue := range warnings {
 			num := tStyleMuted.Render(fmt.Sprintf("%d", i+1))
 			icon := tStyleWarn.Render("▲")
+			resType := tStyleMuted.Render(issue.ResourceType + ":")
 			title := tStyleWarn.Render(issue.Title)
-			cmd := tStyleBlue.Render(issue.Command)
-			inner.WriteString(fmt.Sprintf("%s  %s  %s\n   %s  %s\n",
-				icon, num, title,
-				tStyleMuted.Render("→"), cmd))
+			meta := tStyleMuted.Render(issue.Meta)
+
+			inner.WriteString(fmt.Sprintf("%s  %s  %s  %s\n   %s\n   %s\n",
+				icon, num, resType, title,
+				resourceLocation(issue),
+				meta))
 			if i < len(warnings)-1 {
 				inner.WriteString(tStyleDivider.Render(strings.Repeat("─", tWidth()-12)) + "\n")
 			}
@@ -554,11 +557,14 @@ func renderIssues(m Model) string {
 		for i, issue := range security {
 			num := tStyleMuted.Render(fmt.Sprintf("%d", i+1))
 			icon := tStylePurple.Render("⚠")
+			resType := tStyleMuted.Render(issue.ResourceType + ":")
 			title := tStylePurple.Render(issue.Title)
-			cmd := tStyleBlue.Render(issue.Command)
-			inner.WriteString(fmt.Sprintf("%s  %s  %s\n   %s  %s\n",
-				icon, num, title,
-				tStyleMuted.Render("→"), cmd))
+			meta := tStyleMuted.Render(issue.Meta)
+
+			inner.WriteString(fmt.Sprintf("%s  %s  %s  %s\n   %s\n   %s\n",
+				icon, num, resType, title,
+				resourceLocation(issue),
+				meta))
 			if i < len(security)-1 {
 				inner.WriteString(tStyleDivider.Render(strings.Repeat("─", tWidth()-12)) + "\n")
 			}
@@ -616,12 +622,14 @@ func renderIssueCard(issue Issue, num int) string {
 	}
 
 	numStr := tStyleMuted.Render(fmt.Sprintf("%d", num))
+	resType := tStyleMuted.Render(issue.ResourceType + ":")
 	title := titleStyle.Render(issue.Title)
 	meta := tStyleMuted.Render(issue.Meta)
-	cmd := tStyleCmdBox.Render(issue.Command)
 
-	content := fmt.Sprintf("%s  %s  %s\n   %s\n   %s",
-		icon, numStr, title, meta, cmd)
+	content := fmt.Sprintf("%s  %s  %s  %s\n   %s\n   %s",
+		icon, numStr, resType, title,
+		resourceLocation(issue),
+		meta)
 
 	return box.Render(content)
 }
@@ -784,4 +792,12 @@ func truncate(s string, max int) string {
 		return s
 	}
 	return s[:max-3] + "..."
+}
+
+func resourceLocation(issue Issue) string {
+	if issue.ResourceType == "namespace" {
+		return tStyleMuted.Render("namespace: ") + tStyleBright.Render(issue.Resource)
+	}
+	return tStyleMuted.Render("name: ") + tStyleBright.Render(issue.Resource) +
+		tStyleMuted.Render("   namespace: ") + tStyleBright.Render(issue.Namespace)
 }

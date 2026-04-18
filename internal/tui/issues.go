@@ -20,13 +20,14 @@ func detectIssues(s *model.ClusterSnapshot) []Issue {
 	for _, n := range s.Nodes {
 		if strings.ToLower(n.Status) != "ready" {
 			issues = append(issues, Issue{
-				Severity:   "critical",
-				Title:      fmt.Sprintf("%s is NotReady", n.Name),
-				Resource:   n.Name,
-				Namespace:  "cluster",
-				Meta:       fmt.Sprintf("role: %s  ·  version: %s", n.Roles, n.Version),
-				Command:    fmt.Sprintf("kubectl describe node %s | tail -20", n.Name),
-				DetectedAt: time.Now(),
+				Severity:     "critical",
+				ResourceType: "node",
+				Title:        fmt.Sprintf("node is %s", n.Status),
+				Resource:     n.Name,
+				Namespace:    "cluster",
+				Meta:         fmt.Sprintf("role: %s  ·  version: %s", n.Roles, n.Version),
+				Command:      fmt.Sprintf("kubectl describe node %s", n.Name),
+				DetectedAt:   time.Now(),
 			})
 		}
 	}
@@ -35,37 +36,77 @@ func detectIssues(s *model.ClusterSnapshot) []Issue {
 	for _, p := range s.Pods {
 		switch strings.ToLower(p.Status) {
 		case "failed", "crashloopbackoff", "error":
+			title := fmt.Sprintf("pod is %s", p.Status)
+			resource := p.Name
+			resourceType := "pod"
+			meta := fmt.Sprintf("pod: %s  ·  restarts: %d  ·  node: %s", p.Name, p.Restarts, p.Node)
+
+			if p.OwnerKind == "deployment" && p.OwnerName != "" {
+				title = fmt.Sprintf("deployment has a %s pod", p.Status)
+				resource = p.OwnerName
+				resourceType = "deployment"
+				meta = fmt.Sprintf("pod: %s  ·  restarts: %d", p.Name, p.Restarts)
+			}
+
 			issues = append(issues, Issue{
-				Severity:   "critical",
-				Title:      fmt.Sprintf("%s is %s", p.Name, p.Status),
-				Resource:   p.Name,
-				Namespace:  p.Namespace,
-				Meta:       fmt.Sprintf("namespace: %s  ·  restarts: %d  ·  node: %s", p.Namespace, p.Restarts, p.Node),
-				Command:    fmt.Sprintf("kubectl logs %s -n %s --previous", p.Name, p.Namespace),
-				DetectedAt: time.Now(),
+				Severity:     "critical",
+				ResourceType: resourceType,
+				Title:        title,
+				Resource:     resource,
+				Namespace:    p.Namespace,
+				Meta:         meta,
+				Command:      fmt.Sprintf("kubectl describe %s %s -n %s", resourceType, resource, p.Namespace),
+				DetectedAt:   time.Now(),
 			})
+
 		case "pending":
+			resource := p.Name
+			resourceType := "pod"
+			title := "pod is pending"
+			meta := fmt.Sprintf("pod: %s  ·  node: %s", p.Name, p.Node)
+
+			if p.OwnerKind == "deployment" && p.OwnerName != "" {
+				title = "deployment has a pending pod"
+				resource = p.OwnerName
+				resourceType = "deployment"
+				meta = fmt.Sprintf("pod: %s", p.Name)
+			}
+
 			issues = append(issues, Issue{
-				Severity:   "warning",
-				Title:      fmt.Sprintf("%s is Pending", p.Name),
-				Resource:   p.Name,
-				Namespace:  p.Namespace,
-				Meta:       fmt.Sprintf("namespace: %s  ·  node: %s", p.Namespace, p.Node),
-				Command:    fmt.Sprintf("kubectl describe pod %s -n %s | grep -A10 Events", p.Name, p.Namespace),
-				DetectedAt: time.Now(),
+				Severity:     "warning",
+				ResourceType: resourceType,
+				Title:        title,
+				Resource:     resource,
+				Namespace:    p.Namespace,
+				Meta:         meta,
+				Command:      fmt.Sprintf("kubectl describe %s %s -n %s", resourceType, resource, p.Namespace),
+				DetectedAt:   time.Now(),
 			})
 		}
 
 		// high restarts
 		if p.Restarts > 5 {
+			resource := p.Name
+			resourceType := "pod"
+			title := fmt.Sprintf("pod has %d restarts", p.Restarts)
+			meta := fmt.Sprintf("pod: %s  ·  status: %s", p.Name, p.Status)
+
+			if p.OwnerKind == "deployment" && p.OwnerName != "" {
+				title = fmt.Sprintf("deployment pod restarting %d times", p.Restarts)
+				resource = p.OwnerName
+				resourceType = "deployment"
+				meta = fmt.Sprintf("pod: %s  ·  status: %s", p.Name, p.Status)
+			}
+
 			issues = append(issues, Issue{
-				Severity:   "critical",
-				Title:      fmt.Sprintf("%s has %d restarts", p.Name, p.Restarts),
-				Resource:   p.Name,
-				Namespace:  p.Namespace,
-				Meta:       fmt.Sprintf("namespace: %s  ·  status: %s", p.Namespace, p.Status),
-				Command:    fmt.Sprintf("kubectl logs %s -n %s --previous --tail=50", p.Name, p.Namespace),
-				DetectedAt: time.Now(),
+				Severity:     "critical",
+				ResourceType: resourceType,
+				Title:        title,
+				Resource:     resource,
+				Namespace:    p.Namespace,
+				Meta:         meta,
+				Command:      fmt.Sprintf("kubectl logs %s -n %s --previous --tail=50", p.Name, p.Namespace),
+				DetectedAt:   time.Now(),
 			})
 		}
 	}
@@ -74,57 +115,207 @@ func detectIssues(s *model.ClusterSnapshot) []Issue {
 	for _, d := range s.Deployments {
 		if d.Available == 0 && d.UpToDate > 0 {
 			issues = append(issues, Issue{
-				Severity:   "critical",
-				Title:      fmt.Sprintf("%s has 0 available pods", d.Name),
-				Resource:   d.Name,
-				Namespace:  d.Namespace,
-				Meta:       fmt.Sprintf("namespace: %s  ·  ready: %s", d.Namespace, d.Ready),
-				Command:    fmt.Sprintf("kubectl describe deployment %s -n %s", d.Name, d.Namespace),
-				DetectedAt: time.Now(),
+				Severity:     "critical",
+				ResourceType: "deployment",
+				Title:        "deployment has 0 available pods",
+				Resource:     d.Name,
+				Namespace:    d.Namespace,
+				Meta:         fmt.Sprintf("ready: %s  ·  age: %s", d.Ready, d.Age),
+				Command:      fmt.Sprintf("kubectl describe deployment %s -n %s", d.Name, d.Namespace),
+				DetectedAt:   time.Now(),
 			})
 		}
 	}
 
 	// good practice — no resource limits
-	if len(s.CostSignals.PodsWithNoLimits) > 0 {
+	for _, deplRef := range s.CostSignals.PodsWithNoLimits {
+		parts := strings.SplitN(deplRef, "/", 2)
+		ns, name := "default", deplRef
+		if len(parts) == 2 {
+			ns = parts[0]
+			name = parts[1]
+		}
 		issues = append(issues, Issue{
-			Severity:   "warning",
-			Title:      fmt.Sprintf("%d deployments have no resource limits", len(s.CostSignals.PodsWithNoLimits)),
-			Resource:   "multiple",
-			Namespace:  "cluster",
-			Meta:       strings.Join(s.CostSignals.PodsWithNoLimits, ", "),
-			Command:    "kubectl describe deployment <name> -n <namespace> | grep -A5 Limits",
-			DetectedAt: time.Now(),
+			Severity:     "warning",
+			ResourceType: "deployment",
+			Title:        "deployment has no resource limits",
+			Resource:     name,
+			Namespace:    ns,
+			Meta:         "risk: node starvation",
+			Command:      fmt.Sprintf("kubectl set resources deployment/%s --requests=cpu=100m,memory=128Mi --limits=cpu=500m,memory=256Mi -n %s", name, ns),
+			DetectedAt:   time.Now(),
 		})
 	}
 
 	// good practice — unattached pvcs
 	if len(s.CostSignals.UnattachedPVCs) > 0 {
-		issues = append(issues, Issue{
-			Severity:   "warning",
-			Title:      fmt.Sprintf("%d unattached PVCs — potential waste", len(s.CostSignals.UnattachedPVCs)),
-			Resource:   "multiple",
-			Namespace:  "cluster",
-			Meta:       strings.Join(s.CostSignals.UnattachedPVCs, ", "),
-			Command:    "kubectl get pvc -A | grep -v Bound",
-			DetectedAt: time.Now(),
-		})
+		for _, pvcRef := range s.CostSignals.UnattachedPVCs {
+			parts := strings.SplitN(pvcRef, "/", 2)
+			ns, name := "default", pvcRef
+			if len(parts) == 2 {
+				ns = parts[0]
+				name = parts[1]
+			}
+			issues = append(issues, Issue{
+				Severity:     "warning",
+				ResourceType: "pvc",
+				Title:        "pvc is unattached and billing",
+				Resource:     name,
+				Namespace:    ns,
+				Meta:         fmt.Sprintf("namespace: %s  ·  ~$10/month waste", ns),
+				Command:      fmt.Sprintf("kubectl delete pvc %s -n %s", name, ns),
+				DetectedAt:   time.Now(),
+			})
+		}
 	}
 
 	// good practice — idle namespaces
-	if len(s.CostSignals.IdleNamespaces) > 0 {
+	for _, ns := range s.CostSignals.IdleNamespaces {
 		issues = append(issues, Issue{
-			Severity:   "warning",
-			Title:      fmt.Sprintf("%d idle namespaces — ~$340/month waste", len(s.CostSignals.IdleNamespaces)),
-			Resource:   "multiple",
-			Namespace:  "cluster",
-			Meta:       strings.Join(s.CostSignals.IdleNamespaces, ", "),
-			Command:    fmt.Sprintf("kubectl delete namespace %s", strings.Join(s.CostSignals.IdleNamespaces, " ")),
-			DetectedAt: time.Now(),
+			Severity:     "warning",
+			ResourceType: "namespace",
+			Title:        "namespace is idle",
+			Resource:     ns,
+			Namespace:    ns,
+			Meta:         "no active workloads  ·  ~$340/month waste",
+			Command:      fmt.Sprintf("kubectl delete namespace %s", ns),
+			DetectedAt:   time.Now(),
 		})
 	}
 
+	// security issues
 	issues = append(issues, detectSecurityIssues(s)...)
+
+	return issues
+}
+
+// detectSecurityIssues checks for security misconfigurations
+func detectSecurityIssues(s *model.ClusterSnapshot) []Issue {
+	var issues []Issue
+	sec := s.SecuritySignals
+
+	if len(sec.PrivilegedContainers) > 0 {
+		for _, ref := range sec.PrivilegedContainers {
+			parts := strings.SplitN(ref, "/", 3)
+			ns, pod, container := "default", ref, ""
+			if len(parts) == 3 {
+				ns = parts[0]
+				pod = parts[1]
+				container = parts[2]
+			}
+			issues = append(issues, Issue{
+				Severity:     "security",
+				ResourceType: "pod",
+				Title:        "pod running privileged container",
+				Resource:     pod,
+				Namespace:    ns,
+				Meta:         fmt.Sprintf("container: %s  ·  namespace: %s", container, ns),
+				Command:      fmt.Sprintf("kubectl describe pod %s -n %s", pod, ns),
+				DetectedAt:   time.Now(),
+			})
+		}
+	}
+
+	if len(sec.SecretsInEnvVars) > 0 {
+		for _, ref := range sec.SecretsInEnvVars {
+			parts := strings.SplitN(ref, "/", 3)
+			ns, pod, container := "default", ref, ""
+			if len(parts) == 3 {
+				ns = parts[0]
+				pod = parts[1]
+				container = parts[2]
+			}
+			issues = append(issues, Issue{
+				Severity:     "security",
+				ResourceType: "pod",
+				Title:        "pod exposing secrets in env vars",
+				Resource:     pod,
+				Namespace:    ns,
+				Meta:         fmt.Sprintf("container: %s  ·  use secretRef instead", container),
+				Command:      fmt.Sprintf("kubectl get pod %s -n %s -o jsonpath='{.spec.containers[*].env}'", pod, ns),
+				DetectedAt:   time.Now(),
+			})
+		}
+	}
+
+	if len(sec.HostNetworkPods) > 0 {
+		for _, ref := range sec.HostNetworkPods {
+			parts := strings.SplitN(ref, "/", 2)
+			ns, pod := "default", ref
+			if len(parts) == 2 {
+				ns = parts[0]
+				pod = parts[1]
+			}
+			issues = append(issues, Issue{
+				Severity:     "security",
+				ResourceType: "pod",
+				Title:        "pod using host network",
+				Resource:     pod,
+				Namespace:    ns,
+				Meta:         fmt.Sprintf("namespace: %s  ·  bypasses network isolation", ns),
+				Command:      fmt.Sprintf("kubectl describe pod %s -n %s", pod, ns),
+				DetectedAt:   time.Now(),
+			})
+		}
+	}
+
+	if len(sec.IngressesWithoutTLS) > 0 {
+		for _, ref := range sec.IngressesWithoutTLS {
+			parts := strings.SplitN(ref, "/", 2)
+			ns, name := "default", ref
+			if len(parts) == 2 {
+				ns = parts[0]
+				name = parts[1]
+			}
+			issues = append(issues, Issue{
+				Severity:     "security",
+				ResourceType: "ingress",
+				Title:        "ingress has no TLS configured",
+				Resource:     name,
+				Namespace:    ns,
+				Meta:         fmt.Sprintf("namespace: %s  ·  traffic is unencrypted", ns),
+				Command:      fmt.Sprintf("kubectl describe ingress %s -n %s", name, ns),
+				DetectedAt:   time.Now(),
+			})
+		}
+	}
+
+	if len(sec.NamespacesWithoutNetPol) > 0 {
+		for _, ns := range sec.NamespacesWithoutNetPol {
+			issues = append(issues, Issue{
+				Severity:     "security",
+				ResourceType: "namespace",
+				Title:        "namespace has no network policy",
+				Resource:     ns,
+				Namespace:    ns,
+				Meta:         "unrestricted pod-to-pod communication",
+				Command:      fmt.Sprintf("kubectl get networkpolicy -n %s", ns),
+				DetectedAt:   time.Now(),
+			})
+		}
+	}
+
+	if len(sec.LatestImageTags) > 0 {
+		for _, ref := range sec.LatestImageTags {
+			parts := strings.SplitN(ref, "/", 3)
+			ns, pod, container := "default", ref, ""
+			if len(parts) == 3 {
+				ns = parts[0]
+				pod = parts[1]
+				container = parts[2]
+			}
+			issues = append(issues, Issue{
+				Severity:     "security",
+				ResourceType: "pod",
+				Title:        "pod using unpinned image tag",
+				Resource:     pod,
+				Namespace:    ns,
+				Meta:         fmt.Sprintf("container: %s  ·  namespace: %s", container, ns),
+				Command:      fmt.Sprintf("kubectl get pod %s -n %s -o jsonpath='{.spec.containers[*].image}'", pod, ns),
+				DetectedAt:   time.Now(),
+			})
+		}
+	}
 
 	return issues
 }
@@ -133,104 +324,23 @@ func detectIssues(s *model.ClusterSnapshot) []Issue {
 func detectResolved(current []Issue, previous []ResolvedIssue, prev []Issue) []ResolvedIssue {
 	resolved := previous
 
-	// find issues that were in prev but not in current
 	currentTitles := make(map[string]bool)
 	for _, c := range current {
-		currentTitles[c.Title] = true
+		currentTitles[c.Title+c.Resource] = true
 	}
 
 	for _, p := range prev {
-		if !currentTitles[p.Title] {
+		if !currentTitles[p.Title+p.Resource] {
 			resolved = append(resolved, ResolvedIssue{
-				Title:      p.Title,
+				Title:      fmt.Sprintf("%s %s", p.ResourceType, p.Title),
 				ResolvedAt: time.Now(),
 			})
 		}
 	}
 
-	// keep only last 5
 	if len(resolved) > 5 {
 		resolved = resolved[len(resolved)-5:]
 	}
 
 	return resolved
-}
-
-func detectSecurityIssues(s *model.ClusterSnapshot) []Issue {
-	var issues []Issue
-	sec := s.SecuritySignals
-
-	if len(sec.PrivilegedContainers) > 0 {
-		issues = append(issues, Issue{
-			Severity:   "security",
-			Title:      fmt.Sprintf("%d privileged containers detected", len(sec.PrivilegedContainers)),
-			Resource:   "multiple",
-			Namespace:  "cluster",
-			Meta:       strings.Join(sec.PrivilegedContainers, ", "),
-			Command:    "kubectl get pod -o jsonpath='{.spec.containers[*].securityContext}' -A",
-			DetectedAt: time.Now(),
-		})
-	}
-
-	if len(sec.SecretsInEnvVars) > 0 {
-		issues = append(issues, Issue{
-			Severity:   "security",
-			Title:      fmt.Sprintf("%d containers exposing secrets in env vars", len(sec.SecretsInEnvVars)),
-			Resource:   "multiple",
-			Namespace:  "cluster",
-			Meta:       strings.Join(sec.SecretsInEnvVars, ", "),
-			Command:    "kubectl get pod -o jsonpath='{.spec.containers[*].env}' -A | grep -i secret",
-			DetectedAt: time.Now(),
-		})
-	}
-
-	if len(sec.HostNetworkPods) > 0 {
-		issues = append(issues, Issue{
-			Severity:   "security",
-			Title:      fmt.Sprintf("%d pods using host network", len(sec.HostNetworkPods)),
-			Resource:   "multiple",
-			Namespace:  "cluster",
-			Meta:       strings.Join(sec.HostNetworkPods, ", "),
-			Command:    "kubectl get pod --field-selector spec.hostNetwork=true -A",
-			DetectedAt: time.Now(),
-		})
-	}
-
-	if len(sec.IngressesWithoutTLS) > 0 {
-		issues = append(issues, Issue{
-			Severity:   "security",
-			Title:      fmt.Sprintf("%d ingresses without TLS", len(sec.IngressesWithoutTLS)),
-			Resource:   "multiple",
-			Namespace:  "cluster",
-			Meta:       strings.Join(sec.IngressesWithoutTLS, ", "),
-			Command:    "kubectl get ingress -A | grep -v 443",
-			DetectedAt: time.Now(),
-		})
-	}
-
-	if len(sec.NamespacesWithoutNetPol) > 0 {
-		issues = append(issues, Issue{
-			Severity:   "security",
-			Title:      fmt.Sprintf("%d namespaces have no network policy", len(sec.NamespacesWithoutNetPol)),
-			Resource:   "multiple",
-			Namespace:  "cluster",
-			Meta:       strings.Join(sec.NamespacesWithoutNetPol, ", "),
-			Command:    "kubectl get networkpolicy -A",
-			DetectedAt: time.Now(),
-		})
-	}
-
-	if len(sec.LatestImageTags) > 0 {
-		issues = append(issues, Issue{
-			Severity:   "security",
-			Title:      fmt.Sprintf("%d containers using unpinned image tags", len(sec.LatestImageTags)),
-			Resource:   "multiple",
-			Namespace:  "cluster",
-			Meta:       strings.Join(sec.LatestImageTags, ", "),
-			Command:    "kubectl get pod -o jsonpath='{.spec.containers[*].image}' -A",
-			DetectedAt: time.Now(),
-		})
-	}
-
-	return issues
 }

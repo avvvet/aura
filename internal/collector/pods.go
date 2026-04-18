@@ -3,6 +3,7 @@ package collector
 import (
 	"context"
 	"fmt"
+	"strings"
 
 	"github.com/avvvet/aura/internal/client"
 	"github.com/avvvet/aura/internal/model"
@@ -27,7 +28,6 @@ func (p *PodCollector) Collect(ctx context.Context, snapshot *model.ClusterSnaps
 	}
 
 	for _, pod := range pods.Items {
-		// count restarts across all containers
 		var restarts int32
 		var ready int32
 		for _, cs := range pod.Status.ContainerStatuses {
@@ -39,7 +39,6 @@ func (p *PodCollector) Collect(ctx context.Context, snapshot *model.ClusterSnaps
 
 		totalContainers := int32(len(pod.Spec.Containers))
 
-		// get resource requests and limits from first container
 		cpuRequest := ""
 		memRequest := ""
 		cpuLimit := ""
@@ -65,6 +64,25 @@ func (p *PodCollector) Collect(ctx context.Context, snapshot *model.ClusterSnaps
 			}
 		}
 
+		// get owner reference
+		ownerKind := ""
+		ownerName := ""
+
+		if len(pod.OwnerReferences) > 0 {
+			owner := pod.OwnerReferences[0]
+			if owner.Kind == "ReplicaSet" {
+				// strip replicaset hash to get deployment name
+				parts := strings.Split(owner.Name, "-")
+				if len(parts) > 1 {
+					ownerKind = "deployment"
+					ownerName = strings.Join(parts[:len(parts)-1], "-")
+				}
+			} else {
+				ownerKind = strings.ToLower(owner.Kind)
+				ownerName = owner.Name
+			}
+		}
+
 		snapshot.Pods = append(snapshot.Pods, model.Pod{
 			Name:          pod.Name,
 			Namespace:     pod.Namespace,
@@ -73,6 +91,8 @@ func (p *PodCollector) Collect(ctx context.Context, snapshot *model.ClusterSnaps
 			Restarts:      restarts,
 			Age:           age(pod.CreationTimestamp.Time),
 			Node:          pod.Spec.NodeName,
+			OwnerKind:     ownerKind,
+			OwnerName:     ownerName,
 			CPURequest:    cpuRequest,
 			MemoryRequest: memRequest,
 			CPULimit:      cpuLimit,

@@ -54,13 +54,14 @@ type Model struct {
 
 // Issue represents a detected cluster issue
 type Issue struct {
-	Severity   string
-	Title      string
-	Resource   string
-	Namespace  string
-	Meta       string
-	Command    string
-	DetectedAt time.Time
+	Severity     string
+	ResourceType string
+	Title        string
+	Resource     string
+	Namespace    string
+	Meta         string
+	Command      string
+	DetectedAt   time.Time
 }
 
 // ResolvedIssue represents an issue that was fixed

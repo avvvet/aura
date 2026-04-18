@@ -63,6 +63,8 @@ type Pod struct {
 	Restarts      int32
 	Age           string
 	Node          string
+	OwnerKind     string
+	OwnerName     string
 	CPURequest    string
 	MemoryRequest string
 	CPULimit      string
