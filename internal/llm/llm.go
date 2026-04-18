@@ -15,6 +15,7 @@ type IssueContext struct {
 	ResourceKind      string
 	IssueTitle        string
 	IssueSeverity     string
+	Identifiers       map[string]string
 	Events            []string
 	Logs              []string
 	NodeState         string
@@ -23,6 +24,7 @@ type IssueContext struct {
 
 // Guidance is the structured response from the LLM
 type Guidance struct {
+	Type           string `json:"type"`
 	RootCause      string `json:"root_cause"`
 	FixExplanation string `json:"fix_explanation"`
 	Command        string `json:"command"`

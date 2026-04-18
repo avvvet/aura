@@ -44,6 +44,20 @@ func (s *SecurityCollector) collectPodSecuritySignals(ctx context.Context, snaps
 	for _, pod := range pods.Items {
 		ref := fmt.Sprintf("%s/%s", pod.Namespace, pod.Name)
 
+		// detect owner
+		ownerRef := "standalone"
+		if len(pod.OwnerReferences) > 0 {
+			owner := pod.OwnerReferences[0]
+			if owner.Kind == "ReplicaSet" {
+				parts := strings.Split(owner.Name, "-")
+				if len(parts) > 1 {
+					ownerRef = "deployment:" + strings.Join(parts[:len(parts)-1], "-")
+				}
+			} else {
+				ownerRef = strings.ToLower(owner.Kind) + ":" + owner.Name
+			}
+		}
+
 		// check host network
 		if pod.Spec.HostNetwork {
 			snapshot.SecuritySignals.HostNetworkPods = append(
@@ -52,7 +66,7 @@ func (s *SecurityCollector) collectPodSecuritySignals(ctx context.Context, snaps
 		}
 
 		for _, c := range pod.Spec.Containers {
-			containerRef := fmt.Sprintf("%s/%s", ref, c.Name)
+			containerRef := fmt.Sprintf("%s/%s/%s", ref, c.Name, ownerRef)
 
 			// check privileged containers
 			if c.SecurityContext != nil && c.SecurityContext.Privileged != nil && *c.SecurityContext.Privileged {
@@ -78,7 +92,8 @@ func (s *SecurityCollector) collectPodSecuritySignals(ctx context.Context, snaps
 			// check latest image tag
 			if strings.HasSuffix(c.Image, ":latest") || !strings.Contains(c.Image, ":") {
 				snapshot.SecuritySignals.LatestImageTags = append(
-					snapshot.SecuritySignals.LatestImageTags, containerRef,
+					snapshot.SecuritySignals.LatestImageTags,
+					fmt.Sprintf("%s/%s/%s/%s", pod.Namespace, pod.Name, c.Name, ownerRef),
 				)
 			}
 
@@ -130,7 +145,6 @@ func (s *SecurityCollector) collectNetworkPolicySignals(ctx context.Context, sna
 		return fmt.Errorf("failed to collect namespaces for security check: %w", err)
 	}
 
-	// skip system namespaces
 	systemNamespaces := map[string]bool{
 		"kube-system":     true,
 		"kube-public":     true,

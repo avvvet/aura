@@ -242,16 +242,29 @@ func renderAnalysisView(m Model) string {
 				))
 			}
 			if g.FixExplanation != "" {
+				// label changes based on type
+				label := "ACTION:"
+				if g.Type == "investigate" {
+					label = "LOOK FOR:"
+				}
 				inner.WriteString(fmt.Sprintf("   %s  %s\n",
-					tStyleMuted.Render("ACTION:"),
+					tStyleMuted.Render(label),
 					tStyleBright.Render(truncate(g.FixExplanation, 90)),
 				))
 			}
 			if g.Command != "" {
-				inner.WriteString(fmt.Sprintf("   %s  %s\n",
-					tStyleMuted.Render("RUN:"),
-					tStyleBlue.Render(g.Command),
-				))
+				// icon and label changes based on type
+				if g.Type == "investigate" {
+					inner.WriteString(fmt.Sprintf("   %s  %s\n",
+						tStyleBlue.Render("🔍 CHECK:"),
+						tStyleBlue.Render(g.Command),
+					))
+				} else {
+					inner.WriteString(fmt.Sprintf("   %s  %s\n",
+						tStyleOk.Render("✅ FIX:"),
+						tStyleBlue.Render(g.Command),
+					))
+				}
 			}
 			if g.Risk != "" {
 				inner.WriteString(fmt.Sprintf("   %s  %s\n",

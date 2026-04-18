@@ -196,9 +196,9 @@ func detectSecurityIssues(s *model.ClusterSnapshot) []Issue {
 
 	if len(sec.PrivilegedContainers) > 0 {
 		for _, ref := range sec.PrivilegedContainers {
-			parts := strings.SplitN(ref, "/", 3)
+			parts := strings.SplitN(ref, "/", 4)
 			ns, pod, container := "default", ref, ""
-			if len(parts) == 3 {
+			if len(parts) >= 3 {
 				ns = parts[0]
 				pod = parts[1]
 				container = parts[2]
@@ -206,10 +206,10 @@ func detectSecurityIssues(s *model.ClusterSnapshot) []Issue {
 			issues = append(issues, Issue{
 				Severity:     "security",
 				ResourceType: "pod",
-				Title:        "pod running privileged container",
+				Title:        "running privileged container",
 				Resource:     pod,
 				Namespace:    ns,
-				Meta:         fmt.Sprintf("container: %s  ·  namespace: %s", container, ns),
+				Meta:         fmt.Sprintf("container: %s", container),
 				Command:      fmt.Sprintf("kubectl describe pod %s -n %s", pod, ns),
 				DetectedAt:   time.Now(),
 			})
@@ -218,9 +218,9 @@ func detectSecurityIssues(s *model.ClusterSnapshot) []Issue {
 
 	if len(sec.SecretsInEnvVars) > 0 {
 		for _, ref := range sec.SecretsInEnvVars {
-			parts := strings.SplitN(ref, "/", 3)
+			parts := strings.SplitN(ref, "/", 4)
 			ns, pod, container := "default", ref, ""
-			if len(parts) == 3 {
+			if len(parts) >= 3 {
 				ns = parts[0]
 				pod = parts[1]
 				container = parts[2]
@@ -228,7 +228,7 @@ func detectSecurityIssues(s *model.ClusterSnapshot) []Issue {
 			issues = append(issues, Issue{
 				Severity:     "security",
 				ResourceType: "pod",
-				Title:        "pod exposing secrets in env vars",
+				Title:        "exposing secrets in env vars",
 				Resource:     pod,
 				Namespace:    ns,
 				Meta:         fmt.Sprintf("container: %s  ·  use secretRef instead", container),
@@ -249,10 +249,10 @@ func detectSecurityIssues(s *model.ClusterSnapshot) []Issue {
 			issues = append(issues, Issue{
 				Severity:     "security",
 				ResourceType: "pod",
-				Title:        "pod using host network",
+				Title:        "using host network",
 				Resource:     pod,
 				Namespace:    ns,
-				Meta:         fmt.Sprintf("namespace: %s  ·  bypasses network isolation", ns),
+				Meta:         "bypasses network isolation",
 				Command:      fmt.Sprintf("kubectl describe pod %s -n %s", pod, ns),
 				DetectedAt:   time.Now(),
 			})
@@ -270,10 +270,10 @@ func detectSecurityIssues(s *model.ClusterSnapshot) []Issue {
 			issues = append(issues, Issue{
 				Severity:     "security",
 				ResourceType: "ingress",
-				Title:        "ingress has no TLS configured",
+				Title:        "has no TLS configured",
 				Resource:     name,
 				Namespace:    ns,
-				Meta:         fmt.Sprintf("namespace: %s  ·  traffic is unencrypted", ns),
+				Meta:         "traffic is unencrypted",
 				Command:      fmt.Sprintf("kubectl describe ingress %s -n %s", name, ns),
 				DetectedAt:   time.Now(),
 			})
@@ -285,11 +285,11 @@ func detectSecurityIssues(s *model.ClusterSnapshot) []Issue {
 			issues = append(issues, Issue{
 				Severity:     "security",
 				ResourceType: "namespace",
-				Title:        "namespace has no network policy",
+				Title:        "has no network policy",
 				Resource:     ns,
 				Namespace:    ns,
 				Meta:         "unrestricted pod-to-pod communication",
-				Command:      fmt.Sprintf("kubectl get networkpolicy -n %s", ns),
+				Command:      fmt.Sprintf("kubectl get networkpolicies -n %s", ns),
 				DetectedAt:   time.Now(),
 			})
 		}
@@ -297,21 +297,36 @@ func detectSecurityIssues(s *model.ClusterSnapshot) []Issue {
 
 	if len(sec.LatestImageTags) > 0 {
 		for _, ref := range sec.LatestImageTags {
-			parts := strings.SplitN(ref, "/", 3)
-			ns, pod, container := "default", ref, ""
-			if len(parts) == 3 {
+			parts := strings.SplitN(ref, "/", 4)
+			ns, pod, container, owner := "default", ref, "", "standalone"
+			if len(parts) == 4 {
 				ns = parts[0]
 				pod = parts[1]
 				container = parts[2]
+				owner = parts[3]
 			}
+
+			resource := pod
+			resourceType := "pod"
+			command := fmt.Sprintf("kubectl describe pod %s -n %s", pod, ns)
+			meta := fmt.Sprintf("container: %s  ·  standalone pod, delete and recreate with pinned tag", container)
+
+			if strings.HasPrefix(owner, "deployment:") {
+				deployName := strings.TrimPrefix(owner, "deployment:")
+				resource = deployName
+				resourceType = "deployment"
+				command = fmt.Sprintf("kubectl set image deployment/%s %s=<image>:<pinned-version> -n %s", deployName, container, ns)
+				meta = fmt.Sprintf("container: %s", container)
+			}
+
 			issues = append(issues, Issue{
 				Severity:     "security",
-				ResourceType: "pod",
-				Title:        "pod using unpinned image tag",
-				Resource:     pod,
+				ResourceType: resourceType,
+				Title:        "using unpinned image tag",
+				Resource:     resource,
 				Namespace:    ns,
-				Meta:         fmt.Sprintf("container: %s  ·  namespace: %s", container, ns),
-				Command:      fmt.Sprintf("kubectl get pod %s -n %s -o jsonpath='{.spec.containers[*].image}'", pod, ns),
+				Meta:         meta,
+				Command:      command,
 				DetectedAt:   time.Now(),
 			})
 		}

@@ -224,7 +224,7 @@ func (m *Model) analyzeIssue(issue Issue) tea.Cmd {
 		defer cancel()
 
 		ctxBuilder := auracontext.New(client)
-		ic, err := ctxBuilder.Build(ctx, snapshot, issue.Resource, issue.Namespace, issue.Resource)
+		ic, err := ctxBuilder.Build(ctx, snapshot, issue.Resource, issue.Namespace, issue.ResourceType)
 		if err != nil {
 			return analysisResult{issueTitle: issue.Title, err: err}
 		}
@@ -232,9 +232,10 @@ func (m *Model) analyzeIssue(issue Issue) tea.Cmd {
 		llmCtx := &llm.IssueContext{
 			ResourceName:      ic.ResourceName,
 			ResourceNamespace: ic.ResourceNamespace,
-			ResourceKind:      issue.Resource,
+			ResourceKind:      ic.ResourceKind,
 			IssueTitle:        issue.Title,
 			IssueSeverity:     issue.Severity,
+			Identifiers:       ic.Identifiers,
 			Events:            ic.Events,
 			Logs:              ic.Logs,
 			NodeState:         ic.NodeState,
