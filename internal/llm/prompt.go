@@ -98,11 +98,12 @@ func buildIssueDescription(ic *IssueContext, issueTitle string) string {
 
 	case "has no network policy":
 		return fmt.Sprintf(
-			"  Namespace '%s' has no NetworkPolicy resources.\n"+
-				"  type MUST be 'investigate' — fix requires creating yaml manually.\n"+
-				"  CHECK command: kubectl get networkpolicies -n %s\n"+
-				"  never use --all-namespaces.",
-			ns, ns,
+			"The namespace '%s' has no NetworkPolicy resources.\n"+
+				"Generate a kubectl command to create a default-deny-all NetworkPolicy.\n"+
+				"Use kubectl apply with inline yaml using a single command.\n"+
+				"Example format: kubectl apply -f - <<'EOF'\napiVersion...\nEOF\n"+
+				"Or use kubectl create with --dry-run piped to apply.",
+			ns,
 		)
 
 	case "is unattached and billing":
@@ -199,10 +200,8 @@ func buildResourceDescription(ic *IssueContext) string {
 	return b.String()
 }
 
-// buildInstructions returns JSON response instructions
 func buildInstructions(ic *IssueContext) string {
 	issueCount := len(ic.Issues)
-
 	return fmt.Sprintf(`
 Respond ONLY with a JSON array of %d guidance objects — one per issue:
 [
@@ -211,7 +210,7 @@ Respond ONLY with a JSON array of %d guidance objects — one per issue:
     "type": "fix or investigate",
     "root_cause": "max 15 words — specific cause from context above",
     "fix_explanation": "max 15 words — what needs to be done",
-    "command": "single kubectl command using exact values from context above",
+    "command": "best kubectl command to fix or investigate the issue",
     "watch_for": "single kubectl command to confirm fix worked",
     "risk": "max 15 words — consequence if not fixed",
     "confidence": "high|medium|low"
@@ -219,17 +218,17 @@ Respond ONLY with a JSON array of %d guidance objects — one per issue:
 ]
 
 DECISION PRINCIPLE:
-type "fix"         → command directly resolves the issue, no yaml needed
-type "investigate" → fix requires yaml creation or manual file editing
+type "fix"         → you can provide a command that directly resolves the issue
+type "investigate" → root cause is unclear and output must be read before fixing
 
 COMMAND PRINCIPLE:
 → use ONLY exact names, namespaces, images from THE AFFECTED RESOURCE above
-→ if exact value unknown use <description> as placeholder
-→ single line under 100 characters
-→ never use heredoc, <<<, <<EOF, --type=json patch
-→ never use --grace-period=0 or --force
 → never invent values from training knowledge
 → never suggest :latest as replacement — use <valid-tag> placeholder
+→ never use --grace-period=0 or --force
+→ give your best effort fix command for every issue
+→ multi-line commands are allowed when needed
+→ contractor copies via clipboard so length is not a concern
 → for resource limits use compact single line:
   kubectl set resources deployment/RESOURCE_NAME --limits=cpu=500m,memory=512Mi --requests=cpu=100m,memory=128Mi -n NAMESPACE
 

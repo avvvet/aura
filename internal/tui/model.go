@@ -88,13 +88,14 @@ type ResolvedIssue struct {
 // New creates a new TUI model
 func New(c *client.Client, cfgManager *config.Manager) Model {
 	m := Model{
-		client:        c,
-		status:        statusBooting,
-		nextProbe:     probeInterval,
-		guidance:      make(map[string]*llm.Guidance),
-		analyzing:     make(map[string]bool),
-		configManager: cfgManager,
-		viewMode:      "main",
+		client:           c,
+		status:           statusBooting,
+		nextProbe:        probeInterval,
+		guidance:         make(map[string]*llm.Guidance),
+		analyzing:        make(map[string]bool),
+		configManager:    cfgManager,
+		viewMode:         "main",
+		copyConfirmIndex: -1,
 	}
 
 	cfg, err := cfgManager.LoadConfig()
@@ -201,6 +202,10 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 		m.issues = detectIssues(m.snapshot)
 		m.resolved = detectResolved(m.issues, m.resolved, prevIssues)
+
+		// reset copy confirm when issues change
+		m.copyConfirm = ""
+		m.copyConfirmIndex = -1
 
 		if len(m.issues) == 0 {
 			m.status = statusHealthy
