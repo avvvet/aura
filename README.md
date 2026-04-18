@@ -1,3 +1,8 @@
+## what is aura?
+
+You just joined a team, landed a contract, inherited an unknown kubernetes cluster, or need to troubleshoot fast. One command. Zero setup. aura watches your cluster live, thinks like a senior Kubernetes engineer, tells you exactly what to fix, and confirms when you fixed it.
+
+
 # aura
 
 > the light that guides you through darkness.
@@ -7,12 +12,6 @@
 ---
 
 https://github.com/user-attachments/assets/df070b65-13b9-4b96-80ae-914ddaff48ed
-
----
-
-## what is aura?
-
-You just joined a team, landed a contract, inherited an unknown cluster, or need to troubleshoot fast. One command. Zero setup. aura watches your cluster live, thinks like a senior Kubernetes engineer, tells you exactly what to fix, and confirms when you fixed it.
 
 ---
 
@@ -61,10 +60,9 @@ aura confirms when issue is resolved  ✓
 
 ## install
 
-**binary (linux)**
+**linux / mac**
 ```bash
-curl -L https://github.com/avvvet/aura/releases/latest/download/aura-linux-amd64 -o /usr/local/bin/aura
-chmod +x /usr/local/bin/aura
+curl -fsSL https://raw.githubusercontent.com/avvvet/aura/main/install.sh | sudo sh
 ```
 
 **go install**
