@@ -7,7 +7,6 @@ import (
 	"fmt"
 	"io"
 	"net/http"
-	"time"
 )
 
 // AnthropicAnalyzer implements Analyzer for Anthropic
@@ -32,42 +31,54 @@ func (o *AnthropicAnalyzer) Name() string {
 }
 
 // Analyze sends the issue context to Anthropic and returns guidance
-func (o *AnthropicAnalyzer) Analyze(ctx context.Context, ic *IssueContext) (*Guidance, error) {
+// Analyze runs single issue analysis
+func (a *AnthropicAnalyzer) Analyze(ctx context.Context, ic *IssueContext) (*Guidance, error) {
+	results, err := a.AnalyzeMultiple(ctx, ic)
+	if err != nil {
+		return nil, err
+	}
+	if len(results) == 0 {
+		return nil, fmt.Errorf("no guidance returned")
+	}
+	return results[0], nil
+}
+
+// AnalyzeMultiple runs analysis for all issues in one call
+func (a *AnthropicAnalyzer) AnalyzeMultiple(ctx context.Context, ic *IssueContext) ([]*Guidance, error) {
 	prompt := BuildPrompt(ic)
 
 	reqBody := map[string]interface{}{
-		"model":      o.model,
-		"max_tokens": 1024,
+		"model":      a.model,
+		"max_tokens": 2048,
 		"messages": []map[string]string{
 			{"role": "user", "content": prompt},
 		},
 	}
 
-	data, err := json.Marshal(reqBody)
+	body, err := json.Marshal(reqBody)
 	if err != nil {
 		return nil, fmt.Errorf("failed to marshal request: %w", err)
 	}
 
-	httpClient := &http.Client{Timeout: 60 * time.Second}
-
 	req, err := http.NewRequestWithContext(ctx, "POST",
-		fmt.Sprintf("%s/v1/messages", o.endpoint),
-		bytes.NewReader(data),
+		a.endpoint+"/v1/messages",
+		bytes.NewReader(body),
 	)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create request: %w", err)
 	}
 	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("x-api-key", o.apiKey)
+	req.Header.Set("x-api-key", a.apiKey)
 	req.Header.Set("anthropic-version", "2023-06-01")
 
-	resp, err := httpClient.Do(req)
+	client := &http.Client{}
+	resp, err := client.Do(req)
 	if err != nil {
-		return nil, fmt.Errorf("failed to call anthropic: %w", err)
+		return nil, fmt.Errorf("anthropic request failed: %w", err)
 	}
 	defer resp.Body.Close()
 
-	body, err := io.ReadAll(resp.Body)
+	respBody, err := io.ReadAll(resp.Body)
 	if err != nil {
 		return nil, fmt.Errorf("failed to read response: %w", err)
 	}
@@ -77,13 +88,13 @@ func (o *AnthropicAnalyzer) Analyze(ctx context.Context, ic *IssueContext) (*Gui
 			Text string `json:"text"`
 		} `json:"content"`
 	}
-	if err := json.Unmarshal(body, &anthropicResp); err != nil {
+	if err := json.Unmarshal(respBody, &anthropicResp); err != nil {
 		return nil, fmt.Errorf("failed to parse anthropic response: %w", err)
 	}
 
 	if len(anthropicResp.Content) == 0 {
-		return nil, fmt.Errorf("no content in anthropic response")
+		return nil, fmt.Errorf("no content in response")
 	}
 
-	return parseGuidance(anthropicResp.Content[0].Text)
+	return parseGuidanceArray(anthropicResp.Content[0].Text)
 }

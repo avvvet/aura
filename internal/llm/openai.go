@@ -7,7 +7,6 @@ import (
 	"fmt"
 	"io"
 	"net/http"
-	"time"
 )
 
 // OpenAIAnalyzer implements Analyzer for OpenAI
@@ -32,7 +31,20 @@ func (o *OpenAIAnalyzer) Name() string {
 }
 
 // Analyze sends the issue context to OpenAI and returns guidance
+// Analyze runs single issue analysis
 func (o *OpenAIAnalyzer) Analyze(ctx context.Context, ic *IssueContext) (*Guidance, error) {
+	results, err := o.AnalyzeMultiple(ctx, ic)
+	if err != nil {
+		return nil, err
+	}
+	if len(results) == 0 {
+		return nil, fmt.Errorf("no guidance returned")
+	}
+	return results[0], nil
+}
+
+// AnalyzeMultiple runs analysis for all issues in one call
+func (o *OpenAIAnalyzer) AnalyzeMultiple(ctx context.Context, ic *IssueContext) ([]*Guidance, error) {
 	prompt := BuildPrompt(ic)
 
 	reqBody := map[string]interface{}{
@@ -40,34 +52,32 @@ func (o *OpenAIAnalyzer) Analyze(ctx context.Context, ic *IssueContext) (*Guidan
 		"messages": []map[string]string{
 			{"role": "user", "content": prompt},
 		},
-		"temperature":     0.1,
 		"response_format": map[string]string{"type": "json_object"},
 	}
 
-	data, err := json.Marshal(reqBody)
+	body, err := json.Marshal(reqBody)
 	if err != nil {
 		return nil, fmt.Errorf("failed to marshal request: %w", err)
 	}
 
-	httpClient := &http.Client{Timeout: 60 * time.Second}
-
 	req, err := http.NewRequestWithContext(ctx, "POST",
-		fmt.Sprintf("%s/chat/completions", o.endpoint),
-		bytes.NewReader(data),
+		o.endpoint+"/chat/completions",
+		bytes.NewReader(body),
 	)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create request: %w", err)
 	}
 	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("Authorization", fmt.Sprintf("Bearer %s", o.apiKey))
+	req.Header.Set("Authorization", "Bearer "+o.apiKey)
 
-	resp, err := httpClient.Do(req)
+	client := &http.Client{}
+	resp, err := client.Do(req)
 	if err != nil {
-		return nil, fmt.Errorf("failed to call openai: %w", err)
+		return nil, fmt.Errorf("openai request failed: %w", err)
 	}
 	defer resp.Body.Close()
 
-	body, err := io.ReadAll(resp.Body)
+	respBody, err := io.ReadAll(resp.Body)
 	if err != nil {
 		return nil, fmt.Errorf("failed to read response: %w", err)
 	}
@@ -79,13 +89,13 @@ func (o *OpenAIAnalyzer) Analyze(ctx context.Context, ic *IssueContext) (*Guidan
 			} `json:"message"`
 		} `json:"choices"`
 	}
-	if err := json.Unmarshal(body, &openaiResp); err != nil {
+	if err := json.Unmarshal(respBody, &openaiResp); err != nil {
 		return nil, fmt.Errorf("failed to parse openai response: %w", err)
 	}
 
 	if len(openaiResp.Choices) == 0 {
-		return nil, fmt.Errorf("no choices in openai response")
+		return nil, fmt.Errorf("no choices in response")
 	}
 
-	return parseGuidance(openaiResp.Choices[0].Message.Content)
+	return parseGuidanceArray(openaiResp.Choices[0].Message.Content)
 }

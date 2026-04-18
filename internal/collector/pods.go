@@ -30,15 +30,47 @@ func (p *PodCollector) Collect(ctx context.Context, snapshot *model.ClusterSnaps
 	for _, pod := range pods.Items {
 		var restarts int32
 		var ready int32
+
+		// collect raw container states
+		var containerStates []model.ContainerState
 		for _, cs := range pod.Status.ContainerStatuses {
 			restarts += cs.RestartCount
 			if cs.Ready {
 				ready++
 			}
+
+			state := model.ContainerState{
+				Name:     cs.Name,
+				Ready:    cs.Ready,
+				Restarts: cs.RestartCount,
+			}
+
+			// waiting state — captures ImagePullBackOff, CrashLoopBackOff etc
+			if cs.State.Waiting != nil {
+				state.WaitingReason = cs.State.Waiting.Reason
+				state.WaitingMessage = cs.State.Waiting.Message
+			}
+
+			// terminated state — captures OOMKilled, Error etc
+			if cs.State.Terminated != nil {
+				state.TerminatedReason = cs.State.Terminated.Reason
+				state.ExitCode = cs.State.Terminated.ExitCode
+			}
+
+			// last termination state
+			if cs.LastTerminationState.Terminated != nil {
+				if state.TerminatedReason == "" {
+					state.TerminatedReason = cs.LastTerminationState.Terminated.Reason
+					state.ExitCode = cs.LastTerminationState.Terminated.ExitCode
+				}
+			}
+
+			containerStates = append(containerStates, state)
 		}
 
 		totalContainers := int32(len(pod.Spec.Containers))
 
+		// resource requests and limits
 		cpuRequest := ""
 		memRequest := ""
 		cpuLimit := ""
@@ -64,14 +96,12 @@ func (p *PodCollector) Collect(ctx context.Context, snapshot *model.ClusterSnaps
 			}
 		}
 
-		// get owner reference
+		// owner reference
 		ownerKind := ""
 		ownerName := ""
-
 		if len(pod.OwnerReferences) > 0 {
 			owner := pod.OwnerReferences[0]
 			if owner.Kind == "ReplicaSet" {
-				// strip replicaset hash to get deployment name
 				parts := strings.Split(owner.Name, "-")
 				if len(parts) > 1 {
 					ownerKind = "deployment"
@@ -84,19 +114,20 @@ func (p *PodCollector) Collect(ctx context.Context, snapshot *model.ClusterSnaps
 		}
 
 		snapshot.Pods = append(snapshot.Pods, model.Pod{
-			Name:          pod.Name,
-			Namespace:     pod.Namespace,
-			Status:        string(pod.Status.Phase),
-			Ready:         fmt.Sprintf("%d/%d", ready, totalContainers),
-			Restarts:      restarts,
-			Age:           age(pod.CreationTimestamp.Time),
-			Node:          pod.Spec.NodeName,
-			OwnerKind:     ownerKind,
-			OwnerName:     ownerName,
-			CPURequest:    cpuRequest,
-			MemoryRequest: memRequest,
-			CPULimit:      cpuLimit,
-			MemoryLimit:   memLimit,
+			Name:            pod.Name,
+			Namespace:       pod.Namespace,
+			Status:          string(pod.Status.Phase),
+			Ready:           fmt.Sprintf("%d/%d", ready, totalContainers),
+			Restarts:        restarts,
+			Age:             age(pod.CreationTimestamp.Time),
+			Node:            pod.Spec.NodeName,
+			OwnerKind:       ownerKind,
+			OwnerName:       ownerName,
+			CPURequest:      cpuRequest,
+			MemoryRequest:   memRequest,
+			CPULimit:        cpuLimit,
+			MemoryLimit:     memLimit,
+			ContainerStates: containerStates,
 		})
 	}
 

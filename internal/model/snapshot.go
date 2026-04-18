@@ -16,22 +16,19 @@ type ClusterSnapshot struct {
 	Ingresses   []Ingress
 	PVCs        []PVC
 
-	Analysis        []string
-	SecuritySignals SecuritySignals
 	CostSignals     CostSignals
+	SecuritySignals SecuritySignals
 	Errors          []string
+	Analysis        []string
 }
 
-// SecuritySignals represents security related findings
-type SecuritySignals struct {
-	PrivilegedContainers    []string
-	ContainersRunningAsRoot []string
-	SecretsInEnvVars        []string
-	HostNetworkPods         []string
-	NoSecurityContext       []string
-	LatestImageTags         []string
-	IngressesWithoutTLS     []string
-	NamespacesWithoutNetPol []string
+// NewSnapshot creates a new empty ClusterSnapshot
+func NewSnapshot(clusterName, context string) *ClusterSnapshot {
+	return &ClusterSnapshot{
+		CapturedAt:  time.Now(),
+		ClusterName: clusterName,
+		Context:     context,
+	}
 }
 
 // Node represents a cluster node and its status
@@ -54,21 +51,33 @@ type Namespace struct {
 	Age    string
 }
 
+// ContainerState holds raw container state from Kubernetes API
+type ContainerState struct {
+	Name             string
+	Ready            bool
+	Restarts         int32
+	WaitingReason    string
+	WaitingMessage   string
+	TerminatedReason string
+	ExitCode         int32
+}
+
 // Pod represents a pod and its status
 type Pod struct {
-	Name          string
-	Namespace     string
-	Status        string
-	Ready         string
-	Restarts      int32
-	Age           string
-	Node          string
-	OwnerKind     string
-	OwnerName     string
-	CPURequest    string
-	MemoryRequest string
-	CPULimit      string
-	MemoryLimit   string
+	Name            string
+	Namespace       string
+	Status          string
+	Ready           string
+	Restarts        int32
+	Age             string
+	Node            string
+	OwnerKind       string
+	OwnerName       string
+	CPURequest      string
+	MemoryRequest   string
+	CPULimit        string
+	MemoryLimit     string
+	ContainerStates []ContainerState
 }
 
 // Deployment represents a deployment and its health
@@ -115,7 +124,7 @@ type PVC struct {
 	Age          string
 }
 
-// CostSignals represents cost related signals derived from cluster state
+// CostSignals represents cost related signals
 type CostSignals struct {
 	PodsWithNoLimits     []string
 	UnattachedPVCs       []string
@@ -123,11 +132,14 @@ type CostSignals struct {
 	OverprovisionedNodes []string
 }
 
-// NewSnapshot creates a new empty ClusterSnapshot
-func NewSnapshot(clusterName, context string) *ClusterSnapshot {
-	return &ClusterSnapshot{
-		CapturedAt:  time.Now(),
-		ClusterName: clusterName,
-		Context:     context,
-	}
+// SecuritySignals represents security related findings
+type SecuritySignals struct {
+	PrivilegedContainers    []string
+	ContainersRunningAsRoot []string
+	SecretsInEnvVars        []string
+	HostNetworkPods         []string
+	NoSecurityContext       []string
+	LatestImageTags         []string
+	IngressesWithoutTLS     []string
+	NamespacesWithoutNetPol []string
 }

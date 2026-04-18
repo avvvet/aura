@@ -5,126 +5,234 @@ import (
 	"strings"
 )
 
+// BuildPrompt builds a dynamic natural language prompt from cluster context
 func BuildPrompt(ic *IssueContext) string {
 	var b strings.Builder
 
-	b.WriteString(`You are a senior Kubernetes engineer with 10+ years of production experience.
-You are analyzing a live cluster issue and must provide precise, actionable guidance.
-You must respond ONLY with valid JSON. No explanation, no markdown, no preamble.
+	b.WriteString("You are a senior Kubernetes engineer with 10+ years of production experience.\n")
+	b.WriteString("Analyze these live cluster issues and provide precise, actionable guidance.\n\n")
 
-`)
+	// issue list
+	b.WriteString("THE ISSUES TO ANALYZE:\n")
+	for i, issue := range ic.Issues {
+		b.WriteString(fmt.Sprintf("%d. [%s] %s\n", i+1, strings.ToUpper(issue.Severity), issue.Title))
+	}
+	b.WriteString("\n")
 
-	b.WriteString(fmt.Sprintf("CLUSTER: %s\n", ic.ClusterName))
-	b.WriteString(fmt.Sprintf("ISSUE: %s\n", ic.IssueTitle))
-	b.WriteString(fmt.Sprintf("SEVERITY: %s\n\n", ic.IssueSeverity))
+	// dynamic resource description
+	b.WriteString("THE AFFECTED RESOURCE:\n")
+	b.WriteString(buildResourceDescription(ic))
+	b.WriteString("\n")
 
-	if len(ic.Identifiers) > 0 {
-		b.WriteString("=== RESOURCE IDENTIFIERS — USE ONLY THESE EXACT VALUES IN YOUR COMMAND ===\n")
-		for k, v := range ic.Identifiers {
-			b.WriteString(fmt.Sprintf("%s: %s\n", k, v))
-		}
-		b.WriteString("=========================================================================\n\n")
+	// issue descriptions
+	b.WriteString("ISSUE CONTEXT:\n")
+	for _, issue := range ic.Issues {
+		b.WriteString(fmt.Sprintf("Issue '%s':\n", issue.Title))
+		b.WriteString(buildIssueDescription(ic, issue.Title))
+		b.WriteString("\n")
 	}
 
+	// events
 	if len(ic.Events) > 0 {
-		b.WriteString("=== CLUSTER CONTEXT ===\n")
+		b.WriteString("\nRECENT EVENTS:\n")
 		for _, e := range ic.Events {
-			b.WriteString(fmt.Sprintf("  %s\n", e))
+			b.WriteString(fmt.Sprintf("  - %s\n", e))
 		}
-		b.WriteString("=======================\n\n")
 	}
 
+	// node state
 	if ic.NodeState != "" {
-		b.WriteString(fmt.Sprintf("NODE STATE: %s\n\n", ic.NodeState))
+		b.WriteString(fmt.Sprintf("\nNODE STATE:\n  %s\n", ic.NodeState))
 	}
 
+	// logs
 	if len(ic.Logs) > 0 {
-		b.WriteString("=== CONTAINER LOGS (last 20 lines) ===\n")
+		b.WriteString("\nCONTAINER LOGS (most recent):\n")
 		for _, l := range ic.Logs {
 			b.WriteString(fmt.Sprintf("  %s\n", l))
 		}
-		b.WriteString("======================================\n\n")
 	}
 
-	b.WriteString(`=== INSTRUCTIONS ===
-Respond with this exact JSON:
-{
-  "type": "fix or investigate",
-  "root_cause": "max 15 words specific to context above",
-  "fix_explanation": "max 15 words — for fix: what command does / for investigate: what contractor should look for",
-  "command": "single kubectl command max 100 chars",
-  "watch_for": "single kubectl command to confirm fix worked",
-  "risk": "max 15 words — consequence if not fixed",
-  "confidence": "high|medium|low"
-}
-
-TYPE DECISION:
-- "fix"         → command directly resolves the issue
-- "investigate" → fix requires manual edit or more context
-
-COMMAND RULES — CRITICAL:
-- use ONLY values from RESOURCE IDENTIFIERS section above
-- NEVER use values from your training knowledge or assumptions
-- NEVER invent image names, registry URLs, versions, tags or resource names
-- IMAGE_BASE in IDENTIFIERS is the authoritative image — use it EXACTLY as shown
-- NAMESPACE in IDENTIFIERS is the authoritative namespace — use it EXACTLY
-- RESOURCE_NAME in IDENTIFIERS is the authoritative resource name — use it EXACTLY
-- CONTAINER_NAME in IDENTIFIERS is the authoritative container name — use it EXACTLY
-- command must be a single line under 100 characters
-- prefer: kubectl set, kubectl scale, kubectl rollout, kubectl delete
-- NEVER use: kubectl patch --type=json, heredoc, <<<, <<EOF, multi-line, backslash continuation
-
-SPECIFIC RULES:
-
-- resource limits:
-    type: fix
-    kubectl set resources deployment/RESOURCE_NAME --limits=cpu=500m,memory=512Mi --requests=cpu=100m,memory=128Mi -n NAMESPACE
-    replace RESOURCE_NAME and NAMESPACE with EXACT values from IDENTIFIERS
-
-- unpinned image on standalone pod (POD_TYPE=standalone in IDENTIFIERS):
-    type: investigate
-    CHECK: kubectl describe pod RESOURCE_NAME -n NAMESPACE
-    fix_explanation: standalone pod must be deleted and recreated with pinned image tag
-    NEVER use kubectl set image for standalone pods
-
-- unpinned image on managed pod (POD_TYPE=managed in IDENTIFIERS):
-    type: fix
-    kubectl set image deployment/RESOURCE_NAME CONTAINER_NAME=IMAGE_BASE:<pinned-version> -n NAMESPACE
-    IMAGE_BASE must be taken EXACTLY from IDENTIFIERS — never use a different image
-    CONTAINER_NAME must be taken EXACTLY from IDENTIFIERS
-    RESOURCE_NAME must be taken EXACTLY from IDENTIFIERS
-    NAMESPACE must be taken EXACTLY from IDENTIFIERS
-
-- scale:
-    type: fix
-    kubectl scale deployment/RESOURCE_NAME --replicas=<count> -n NAMESPACE
-
-- rollback:
-    type: fix
-    kubectl rollout undo deployment/RESOURCE_NAME -n NAMESPACE
-
-- network policy missing:
-    type: investigate — ALWAYS, never generate yaml inline
-    CHECK command: kubectl get networkpolicies -n NAMESPACE
-    use NAMESPACE from IDENTIFIERS above — never use --all-namespaces
-    fix_explanation: describe what NetworkPolicy yaml contractor needs to create
-
-- TLS missing, secrets in env, privileged container, security context:
-    type: investigate — ALWAYS
-    give best investigation kubectl command using values from IDENTIFIERS
-    explain what contractor needs to manually fix
-	
-- root_cause must reference ONLY values from RESOURCE IDENTIFIERS
-  use CURRENT_IMAGE value when describing image issues
-  never use image names from your training knowledge in root_cause
-
-CONFIDENCE:
-- high   → root cause confirmed by events or logs
-- medium → root cause probable but not fully confirmed
-- low    → root cause unclear, always use investigate type
-
-respond with JSON only, nothing else
-===`)
+	b.WriteString(buildInstructions(ic))
 
 	return b.String()
+}
+
+// buildIssueDescription builds focused description per issue type
+func buildIssueDescription(ic *IssueContext, issueTitle string) string {
+	name := ic.ResourceName
+	ns := ic.ResourceNamespace
+	kind := ic.ResourceKind
+	image := ic.Identifiers["CURRENT_IMAGE"]
+	podType := ic.Identifiers["POD_TYPE"]
+
+	switch issueTitle {
+	case "has no resource limits":
+		return fmt.Sprintf(
+			"  The %s '%s' in namespace '%s' has no CPU or memory limits defined.\n"+
+				"  Current CPU limit: %s\n"+
+				"  Current memory limit: %s\n"+
+				"  Focus ONLY on the missing resource limits — ignore any other issues.",
+			kind, name, ns,
+			ic.Identifiers["CPU_LIMIT"],
+			ic.Identifiers["MEMORY_LIMIT"],
+		)
+
+	case "using unpinned image tag":
+		if podType == "standalone" {
+			return fmt.Sprintf(
+				"  Standalone pod '%s' in namespace '%s' uses unpinned image: %s\n"+
+					"  IMPORTANT: standalone pod — type MUST be 'fix'\n"+
+					"  correct fix: kubectl delete pod %s -n %s\n"+
+					"  never use kubectl set image on standalone pods.",
+				name, ns, image, name, ns,
+			)
+		}
+		return fmt.Sprintf(
+			"  The %s '%s' in namespace '%s' uses unpinned image: %s\n"+
+				"  Image base: %s\n"+
+				"  Fix: update to pinned version tag.",
+			kind, name, ns, image,
+			ic.Identifiers["IMAGE_BASE"],
+		)
+
+	case "has no network policy":
+		return fmt.Sprintf(
+			"  Namespace '%s' has no NetworkPolicy resources.\n"+
+				"  type MUST be 'investigate' — fix requires creating yaml manually.\n"+
+				"  CHECK command: kubectl get networkpolicies -n %s\n"+
+				"  never use --all-namespaces.",
+			ns, ns,
+		)
+
+	case "is unattached and billing":
+		return fmt.Sprintf(
+			"  PVC '%s' in namespace '%s' is not mounted by any pod.\n"+
+				"  Fix: delete if no longer needed.",
+			name, ns,
+		)
+
+	case "is idle":
+		return fmt.Sprintf(
+			"  Namespace '%s' has no active workloads.\n"+
+				"  Fix: delete if no longer needed.",
+			name,
+		)
+
+	case "running privileged container":
+		return fmt.Sprintf(
+			"  Pod '%s' in namespace '%s' runs a privileged container.\n"+
+				"  type MUST be 'investigate' — fix requires editing deployment yaml.",
+			name, ns,
+		)
+
+	case "exposing secrets in env vars":
+		return fmt.Sprintf(
+			"  Pod '%s' in namespace '%s' has secrets in plain env vars.\n"+
+				"  type MUST be 'investigate' — fix requires using secretRef in yaml.",
+			name, ns,
+		)
+
+	case "has no TLS configured":
+		return fmt.Sprintf(
+			"  Ingress '%s' in namespace '%s' has no TLS.\n"+
+				"  type MUST be 'investigate' — fix requires editing ingress yaml.",
+			name, ns,
+		)
+
+	default:
+		return fmt.Sprintf(
+			"  Issue '%s' on %s '%s' in namespace '%s'.",
+			issueTitle, kind, name, ns,
+		)
+	}
+}
+
+// buildResourceDescription builds natural language resource summary
+func buildResourceDescription(ic *IssueContext) string {
+	var b strings.Builder
+
+	b.WriteString(fmt.Sprintf("- Resource type: %s\n", ic.ResourceKind))
+	b.WriteString(fmt.Sprintf("- Name: %s\n", ic.ResourceName))
+	b.WriteString(fmt.Sprintf("- Namespace: %s\n", ic.ResourceNamespace))
+
+	if v, ok := ic.Identifiers["CONTAINER_NAME"]; ok {
+		b.WriteString(fmt.Sprintf("- Container name: %s\n", v))
+	}
+	if v, ok := ic.Identifiers["CURRENT_IMAGE"]; ok {
+		b.WriteString(fmt.Sprintf("- Current image: %s\n", v))
+	}
+	if v, ok := ic.Identifiers["IMAGE_BASE"]; ok {
+		b.WriteString(fmt.Sprintf("- Image base: %s\n", v))
+	}
+	if v, ok := ic.Identifiers["CURRENT_TAG"]; ok {
+		b.WriteString(fmt.Sprintf("- Current tag: %s\n", v))
+	}
+	if v, ok := ic.Identifiers["CPU_LIMIT"]; ok {
+		b.WriteString(fmt.Sprintf("- CPU limit: %s\n", v))
+	}
+	if v, ok := ic.Identifiers["MEMORY_LIMIT"]; ok {
+		b.WriteString(fmt.Sprintf("- Memory limit: %s\n", v))
+	}
+	if v, ok := ic.Identifiers["CPU_REQUEST"]; ok {
+		b.WriteString(fmt.Sprintf("- CPU request: %s\n", v))
+	}
+	if v, ok := ic.Identifiers["MEMORY_REQUEST"]; ok {
+		b.WriteString(fmt.Sprintf("- Memory request: %s\n", v))
+	}
+	if v, ok := ic.Identifiers["REPLICA_COUNT"]; ok {
+		b.WriteString(fmt.Sprintf("- Replicas: %s\n", v))
+	}
+	if v, ok := ic.Identifiers["POD_TYPE"]; ok {
+		b.WriteString(fmt.Sprintf("- Pod type: %s\n", v))
+	}
+	if v, ok := ic.Identifiers["OWNER_DEPLOYMENT"]; ok {
+		b.WriteString(fmt.Sprintf("- Owner deployment: %s\n", v))
+	}
+	if v, ok := ic.Identifiers["POD_COUNT"]; ok {
+		b.WriteString(fmt.Sprintf("- Pods in namespace: %s\n", v))
+	}
+	if v, ok := ic.Identifiers["NODE_NAME"]; ok {
+		b.WriteString(fmt.Sprintf("- Node: %s\n", v))
+	}
+
+	return b.String()
+}
+
+// buildInstructions returns JSON response instructions
+func buildInstructions(ic *IssueContext) string {
+	issueCount := len(ic.Issues)
+
+	return fmt.Sprintf(`
+Respond ONLY with a JSON array of %d guidance objects — one per issue:
+[
+  {
+    "issue": "exact issue title from THE ISSUES list above",
+    "type": "fix or investigate",
+    "root_cause": "max 15 words — specific cause from context above",
+    "fix_explanation": "max 15 words — what needs to be done",
+    "command": "single kubectl command using exact values from context above",
+    "watch_for": "single kubectl command to confirm fix worked",
+    "risk": "max 15 words — consequence if not fixed",
+    "confidence": "high|medium|low"
+  }
+]
+
+DECISION PRINCIPLE:
+type "fix"         → command directly resolves the issue, no yaml needed
+type "investigate" → fix requires yaml creation or manual file editing
+
+COMMAND PRINCIPLE:
+→ use ONLY exact names, namespaces, images from THE AFFECTED RESOURCE above
+→ if exact value unknown use <description> as placeholder
+→ single line under 100 characters
+→ never use heredoc, <<<, <<EOF, --type=json patch
+→ never use --grace-period=0 or --force
+→ never invent values from training knowledge
+→ never suggest :latest as replacement — use <valid-tag> placeholder
+→ for resource limits use compact single line:
+  kubectl set resources deployment/RESOURCE_NAME --limits=cpu=500m,memory=512Mi --requests=cpu=100m,memory=128Mi -n NAMESPACE
+
+respond with JSON array only — no markdown, no explanation
+`, issueCount)
 }

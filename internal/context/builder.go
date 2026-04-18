@@ -37,27 +37,27 @@ func New(c *client.Client) *Builder {
 	return &Builder{client: c}
 }
 
-// Build fetches rich context for a specific issue
-func (b *Builder) Build(ctx context.Context, snapshot *model.ClusterSnapshot, resourceName, namespace, kind string) (*IssueContext, error) {
+// Build fetches context specific to the issue type
+func (b *Builder) Build(ctx context.Context, snapshot *model.ClusterSnapshot, resourceName, namespace, kind, issueTitle string) (*IssueContext, error) {
 	ic := &IssueContext{
 		ResourceName:      resourceName,
 		ResourceNamespace: namespace,
 		ResourceKind:      kind,
+		IssueTitle:        issueTitle,
 		ClusterName:       snapshot.ClusterName,
 		Context:           snapshot.Context,
 		Identifiers:       make(map[string]string),
 	}
 
-	// always present identifiers
 	ic.Identifiers["RESOURCE_KIND"] = kind
 	ic.Identifiers["RESOURCE_NAME"] = resourceName
 	ic.Identifiers["NAMESPACE"] = namespace
 
 	switch strings.ToLower(kind) {
+	case "deployment":
+		b.enrichDeploymentContext(ctx, ic, snapshot)
 	case "pod":
 		b.enrichPodContext(ctx, ic)
-	case "deployment":
-		b.enrichDeploymentContext(ctx, ic)
 	case "node":
 		b.enrichNodeContext(ctx, ic)
 	case "namespace":
@@ -73,7 +73,144 @@ func (b *Builder) Build(ctx context.Context, snapshot *model.ClusterSnapshot, re
 	return ic, nil
 }
 
-// enrichPodContext fetches focused context for a pod issue
+// enrichDeploymentContext fetches context specific to the deployment issue type
+func (b *Builder) enrichDeploymentContext(ctx context.Context, ic *IssueContext, snapshot *model.ClusterSnapshot) {
+	deploy, err := b.client.Kubernetes.AppsV1().
+		Deployments(ic.ResourceNamespace).
+		Get(ctx, ic.ResourceName, metav1.GetOptions{})
+	if err != nil {
+		return
+	}
+
+	// always include replica status
+	if deploy.Spec.Replicas != nil {
+		ic.Identifiers["REPLICA_COUNT"] = fmt.Sprintf("%d", *deploy.Spec.Replicas)
+		ic.Events = append(ic.Events,
+			fmt.Sprintf("replicas: desired=%d ready=%d available=%d",
+				*deploy.Spec.Replicas,
+				deploy.Status.ReadyReplicas,
+				deploy.Status.AvailableReplicas,
+			),
+		)
+	}
+
+	// always include container basic info
+	for _, c := range deploy.Spec.Template.Spec.Containers {
+		ic.Identifiers["CONTAINER_NAME"] = c.Name
+		ic.Identifiers["CURRENT_IMAGE"] = c.Image
+
+		parts := strings.SplitN(c.Image, ":", 2)
+		ic.Identifiers["IMAGE_BASE"] = parts[0]
+		if len(parts) == 2 {
+			ic.Identifiers["CURRENT_TAG"] = parts[1]
+		} else {
+			ic.Identifiers["CURRENT_TAG"] = "latest"
+		}
+
+		ic.Events = append(ic.Events,
+			fmt.Sprintf("container '%s' image: %s", c.Name, c.Image),
+		)
+
+		// limits context — only for limits issues
+		if strings.Contains(ic.IssueTitle, "no resource limits") {
+			if c.Resources.Limits != nil {
+				ic.Identifiers["CPU_LIMIT"] = c.Resources.Limits.Cpu().String()
+				ic.Identifiers["MEMORY_LIMIT"] = c.Resources.Limits.Memory().String()
+				ic.Events = append(ic.Events,
+					fmt.Sprintf("container '%s' limits: cpu=%s memory=%s",
+						c.Name,
+						c.Resources.Limits.Cpu().String(),
+						c.Resources.Limits.Memory().String(),
+					),
+				)
+			} else {
+				ic.Identifiers["CPU_LIMIT"] = "none"
+				ic.Identifiers["MEMORY_LIMIT"] = "none"
+				ic.Events = append(ic.Events,
+					fmt.Sprintf("container '%s' limits: none — no cpu or memory limits set", c.Name),
+				)
+			}
+			if c.Resources.Requests != nil {
+				ic.Identifiers["CPU_REQUEST"] = c.Resources.Requests.Cpu().String()
+				ic.Identifiers["MEMORY_REQUEST"] = c.Resources.Requests.Memory().String()
+				ic.Events = append(ic.Events,
+					fmt.Sprintf("container '%s' requests: cpu=%s memory=%s",
+						c.Name,
+						c.Resources.Requests.Cpu().String(),
+						c.Resources.Requests.Memory().String(),
+					),
+				)
+			} else {
+				ic.Identifiers["CPU_REQUEST"] = "none"
+				ic.Identifiers["MEMORY_REQUEST"] = "none"
+				ic.Events = append(ic.Events,
+					fmt.Sprintf("container '%s' requests: none", c.Name),
+				)
+			}
+		}
+	}
+
+	// pod states — only for availability/health issues not limits
+	if !strings.Contains(ic.IssueTitle, "no resource limits") {
+		b.enrichDeploymentPodStates(ctx, ic, snapshot)
+	}
+
+	// warning events — always useful max 10
+	events, err := b.client.Kubernetes.CoreV1().Events(ic.ResourceNamespace).List(ctx, metav1.ListOptions{
+		FieldSelector: fmt.Sprintf("involvedObject.name=%s", ic.ResourceName),
+	})
+	if err == nil {
+		count := 0
+		for _, e := range events.Items {
+			if e.Type == "Warning" && count < 10 {
+				// for limits issue skip image pull events
+				if strings.Contains(ic.IssueTitle, "no resource limits") &&
+					strings.Contains(strings.ToLower(e.Reason), "image") {
+					continue
+				}
+				ic.Events = append(ic.Events,
+					fmt.Sprintf("[Warning] %s: %s", e.Reason, e.Message),
+				)
+				count++
+			}
+		}
+	}
+}
+
+// enrichDeploymentPodStates fetches pod states for availability issues
+func (b *Builder) enrichDeploymentPodStates(ctx context.Context, ic *IssueContext, snapshot *model.ClusterSnapshot) {
+	// use snapshot pods — already collected, no extra API call
+	for _, p := range snapshot.Pods {
+		if p.Namespace != ic.ResourceNamespace || p.OwnerName != ic.ResourceName {
+			continue
+		}
+
+		ic.Events = append(ic.Events,
+			fmt.Sprintf("pod '%s' phase: %s", p.Name, p.Status),
+		)
+
+		for _, cs := range p.ContainerStates {
+			if cs.WaitingReason != "" {
+				ic.Events = append(ic.Events,
+					fmt.Sprintf("  container '%s' waiting: %s — %s",
+						cs.Name, cs.WaitingReason, cs.WaitingMessage),
+				)
+			}
+			if cs.TerminatedReason != "" {
+				ic.Events = append(ic.Events,
+					fmt.Sprintf("  container '%s' terminated: %s exitCode: %d",
+						cs.Name, cs.TerminatedReason, cs.ExitCode),
+				)
+			}
+			ic.Events = append(ic.Events,
+				fmt.Sprintf("  container '%s' restarts: %d ready: %v",
+					cs.Name, cs.Restarts, cs.Ready),
+			)
+		}
+	}
+}
+
+// enrichPodContext fetches focused context for a standalone pod issue
 func (b *Builder) enrichPodContext(ctx context.Context, ic *IssueContext) {
 	pod, err := b.client.Kubernetes.CoreV1().
 		Pods(ic.ResourceNamespace).
@@ -120,22 +257,33 @@ func (b *Builder) enrichPodContext(ctx context.Context, ic *IssueContext) {
 
 	// container statuses
 	for _, cs := range pod.Status.ContainerStatuses {
-		ic.Events = append(ic.Events,
-			fmt.Sprintf("container '%s' ready=%v restarts=%d",
-				cs.Name, cs.Ready, cs.RestartCount),
-		)
-		if cs.LastTerminationState.Terminated != nil {
+		if cs.State.Waiting != nil && cs.State.Waiting.Reason != "" {
 			ic.Events = append(ic.Events,
-				fmt.Sprintf("container '%s' last exit: reason=%s exitCode=%d",
-					cs.Name,
-					cs.LastTerminationState.Terminated.Reason,
-					cs.LastTerminationState.Terminated.ExitCode,
-				),
+				fmt.Sprintf("container '%s' waiting: %s — %s",
+					cs.Name, cs.State.Waiting.Reason, cs.State.Waiting.Message),
 			)
 		}
+		if cs.State.Terminated != nil {
+			ic.Events = append(ic.Events,
+				fmt.Sprintf("container '%s' terminated: %s exitCode: %d",
+					cs.Name, cs.State.Terminated.Reason, cs.State.Terminated.ExitCode),
+			)
+		}
+		if cs.LastTerminationState.Terminated != nil {
+			ic.Events = append(ic.Events,
+				fmt.Sprintf("container '%s' last termination: %s exitCode: %d",
+					cs.Name,
+					cs.LastTerminationState.Terminated.Reason,
+					cs.LastTerminationState.Terminated.ExitCode),
+			)
+		}
+		ic.Events = append(ic.Events,
+			fmt.Sprintf("container '%s' restarts: %d ready: %v",
+				cs.Name, cs.RestartCount, cs.Ready),
+		)
 	}
 
-	// warning events only — max 10
+	// warning events max 10
 	events, err := b.client.Kubernetes.CoreV1().Events(ic.ResourceNamespace).List(ctx, metav1.ListOptions{
 		FieldSelector: fmt.Sprintf("involvedObject.name=%s", ic.ResourceName),
 	})
@@ -151,7 +299,7 @@ func (b *Builder) enrichPodContext(ctx context.Context, ic *IssueContext) {
 		}
 	}
 
-	// current logs — last 20 lines
+	// logs — last 20 lines
 	tailLines := int64(20)
 	logs, err := b.client.Kubernetes.CoreV1().
 		Pods(ic.ResourceNamespace).
@@ -166,7 +314,7 @@ func (b *Builder) enrichPodContext(ctx context.Context, ic *IssueContext) {
 		}
 	}
 
-	// previous container logs
+	// previous logs
 	prevLogs, err := b.client.Kubernetes.CoreV1().
 		Pods(ic.ResourceNamespace).
 		GetLogs(ic.ResourceName, &corev1.PodLogOptions{
@@ -200,106 +348,6 @@ func (b *Builder) enrichPodContext(ctx context.Context, ic *IssueContext) {
 				node.Status.Capacity.Cpu().String(),
 				node.Status.Capacity.Memory().String(),
 			)
-		}
-	}
-}
-
-// enrichDeploymentContext fetches focused context for a deployment issue
-func (b *Builder) enrichDeploymentContext(ctx context.Context, ic *IssueContext) {
-	deploy, err := b.client.Kubernetes.AppsV1().
-		Deployments(ic.ResourceNamespace).
-		Get(ctx, ic.ResourceName, metav1.GetOptions{})
-	if err != nil {
-		return
-	}
-
-	// replica count
-	if deploy.Spec.Replicas != nil {
-		ic.Identifiers["REPLICA_COUNT"] = fmt.Sprintf("%d", *deploy.Spec.Replicas)
-	}
-
-	// replica status
-	ic.Events = append(ic.Events,
-		fmt.Sprintf("replicas: desired=%d ready=%d available=%d updated=%d",
-			*deploy.Spec.Replicas,
-			deploy.Status.ReadyReplicas,
-			deploy.Status.AvailableReplicas,
-			deploy.Status.UpdatedReplicas,
-		),
-	)
-
-	// container info
-	for _, c := range deploy.Spec.Template.Spec.Containers {
-		ic.Identifiers["CONTAINER_NAME"] = c.Name
-		ic.Identifiers["CURRENT_IMAGE"] = c.Image
-		parts := strings.SplitN(c.Image, ":", 2)
-		ic.Identifiers["IMAGE_BASE"] = parts[0]
-		if len(parts) == 2 {
-			ic.Identifiers["CURRENT_TAG"] = parts[1]
-		} else {
-			ic.Identifiers["CURRENT_TAG"] = "latest"
-		}
-
-		if c.Resources.Limits != nil {
-			ic.Identifiers["CPU_LIMIT"] = c.Resources.Limits.Cpu().String()
-			ic.Identifiers["MEMORY_LIMIT"] = c.Resources.Limits.Memory().String()
-		} else {
-			ic.Identifiers["CPU_LIMIT"] = "none"
-			ic.Identifiers["MEMORY_LIMIT"] = "none"
-		}
-
-		if c.Resources.Requests != nil {
-			ic.Identifiers["CPU_REQUEST"] = c.Resources.Requests.Cpu().String()
-			ic.Identifiers["MEMORY_REQUEST"] = c.Resources.Requests.Memory().String()
-		} else {
-			ic.Identifiers["CPU_REQUEST"] = "none"
-			ic.Identifiers["MEMORY_REQUEST"] = "none"
-		}
-
-		ic.Events = append(ic.Events,
-			fmt.Sprintf("container '%s' image: %s", c.Name, c.Image),
-		)
-		if c.Resources.Limits != nil {
-			ic.Events = append(ic.Events,
-				fmt.Sprintf("container '%s' limits: cpu=%s memory=%s",
-					c.Name,
-					c.Resources.Limits.Cpu().String(),
-					c.Resources.Limits.Memory().String(),
-				),
-			)
-		} else {
-			ic.Events = append(ic.Events,
-				fmt.Sprintf("container '%s' limits: none", c.Name),
-			)
-		}
-		if c.Resources.Requests != nil {
-			ic.Events = append(ic.Events,
-				fmt.Sprintf("container '%s' requests: cpu=%s memory=%s",
-					c.Name,
-					c.Resources.Requests.Cpu().String(),
-					c.Resources.Requests.Memory().String(),
-				),
-			)
-		} else {
-			ic.Events = append(ic.Events,
-				fmt.Sprintf("container '%s' requests: none", c.Name),
-			)
-		}
-	}
-
-	// warning events only — max 10
-	events, err := b.client.Kubernetes.CoreV1().Events(ic.ResourceNamespace).List(ctx, metav1.ListOptions{
-		FieldSelector: fmt.Sprintf("involvedObject.name=%s", ic.ResourceName),
-	})
-	if err == nil {
-		count := 0
-		for _, e := range events.Items {
-			if e.Type == "Warning" && count < 10 {
-				ic.Events = append(ic.Events,
-					fmt.Sprintf("[Warning] %s: %s", e.Reason, e.Message),
-				)
-				count++
-			}
 		}
 	}
 }

@@ -2,8 +2,11 @@ package tui
 
 import (
 	"context"
+	"strconv"
+	"strings"
 	"time"
 
+	"github.com/atotto/clipboard"
 	tea "github.com/charmbracelet/bubbletea"
 
 	"github.com/avvvet/aura/internal/client"
@@ -25,31 +28,41 @@ const (
 	statusError
 )
 
-// analysisResult is sent when LLM analysis completes
+// analysisResult is sent when single issue LLM analysis completes
 type analysisResult struct {
 	issueTitle string
 	guidance   *llm.Guidance
 	err        error
 }
 
+// resourceAnalysisResult is sent when a resource group analysis completes
+type resourceAnalysisResult struct {
+	key       string
+	issues    []Issue
+	guidances []*llm.Guidance
+	err       error
+}
+
 // Model is the bubbletea model for aura live TUI
 type Model struct {
-	client        *client.Client
-	snapshot      *model.ClusterSnapshot
-	issues        []Issue
-	resolved      []ResolvedIssue
-	guidance      map[string]*llm.Guidance // key = issue title
-	analyzing     map[string]bool          // issues currently being analyzed
-	status        status
-	probeCount    int
-	lastProbe     time.Time
-	nextProbe     int
-	errors        []string
-	probeTimeMs   int64
-	analyzer      llm.Analyzer
-	configManager *config.Manager
-	llmConfigured bool
-	viewMode      string // "main" or "analysis"
+	client           *client.Client
+	snapshot         *model.ClusterSnapshot
+	issues           []Issue
+	resolved         []ResolvedIssue
+	guidance         map[string]*llm.Guidance
+	analyzing        map[string]bool
+	status           status
+	probeCount       int
+	lastProbe        time.Time
+	nextProbe        int
+	errors           []string
+	probeTimeMs      int64
+	analyzer         llm.Analyzer
+	configManager    *config.Manager
+	llmConfigured    bool
+	viewMode         string
+	copyConfirm      string
+	copyConfirmIndex int
 }
 
 // Issue represents a detected cluster issue
@@ -66,8 +79,10 @@ type Issue struct {
 
 // ResolvedIssue represents an issue that was fixed
 type ResolvedIssue struct {
-	Title      string
-	ResolvedAt time.Time
+	Title        string
+	ResourceType string
+	Resource     string
+	ResolvedAt   time.Time
 }
 
 // New creates a new TUI model
@@ -82,7 +97,6 @@ func New(c *client.Client, cfgManager *config.Manager) Model {
 		viewMode:      "main",
 	}
 
-	// load LLM config
 	cfg, err := cfgManager.LoadConfig()
 	if err == nil && cfg.LLMProvider != "" {
 		apiKey, _ := cfgManager.LoadAPIKey()
@@ -136,12 +150,31 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				return m, nil
 			}
 			if m.viewMode == "analysis" && m.analyzer != nil && len(m.issues) > 0 {
+				m.guidance = make(map[string]*llm.Guidance)
+				m.analyzing = make(map[string]bool)
+				m.copyConfirm = ""
 				return m, m.analyzeAll()
 			}
 
 		case "esc", "b":
 			m.viewMode = "main"
+			m.copyConfirm = ""
 			return m, nil
+
+		case "1", "2", "3", "4", "5", "6", "7", "8", "9":
+			if m.viewMode == "analysis" {
+				idx, _ := strconv.Atoi(msg.String())
+				idx-- // zero based
+				if idx < len(m.issues) {
+					issue := m.issues[idx]
+					key := issue.Title + issue.Resource
+					if g, ok := m.guidance[key]; ok && g.Command != "" {
+						_ = clipboard.WriteAll(g.Command)
+						m.copyConfirm = "✓ copied to clipboard"
+						m.copyConfirmIndex = idx
+					}
+				}
+			}
 		}
 
 	case tickMsg:
@@ -175,66 +208,135 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.status = statusIssues
 		}
 
-		// auto analyze new issues if LLM configured
+		// auto analyze new issues grouped by resource
 		if m.analyzer != nil {
 			newIssues := findNewIssues(m.issues, prevIssues)
 			if len(newIssues) > 0 {
-				return m, m.analyzeIssues(newIssues)
+				groups := groupByResource(newIssues)
+				var cmds []tea.Cmd
+				for key, groupIssues := range groups {
+					for _, issue := range groupIssues {
+						m.analyzing[issue.Title+issue.Resource] = true
+					}
+					cmds = append(cmds, m.analyzeResourceGroup(key, groupIssues))
+				}
+				if len(cmds) > 0 {
+					return m, tea.Batch(cmds...)
+				}
 			}
 		}
 
-	case analysisResult:
-		if msg.err == nil && msg.guidance != nil {
-			m.guidance[msg.issueTitle] = msg.guidance
+	case resourceAnalysisResult:
+		for _, issue := range msg.issues {
+			delete(m.analyzing, issue.Title+issue.Resource)
 		}
-		delete(m.analyzing, msg.issueTitle)
+
+		if msg.err == nil && len(msg.guidances) > 0 {
+			for _, g := range msg.guidances {
+				for _, issue := range msg.issues {
+					if strings.EqualFold(g.Issue, issue.Title) ||
+						(g.Issue == "" && len(msg.issues) == 1) {
+						m.guidance[issue.Title+issue.Resource] = g
+						break
+					}
+				}
+			}
+		}
+
+		if m.viewMode == "analysis" {
+			return m, m.analyzeAll()
+		}
 	}
 
 	return m, nil
 }
 
-// analyzeAll triggers analysis for all current issues
-func (m *Model) analyzeAll() tea.Cmd {
-	return m.analyzeIssues(m.issues)
+// groupByResource groups issues by resource key
+func groupByResource(issues []Issue) map[string][]Issue {
+	groups := make(map[string][]Issue)
+	for _, issue := range issues {
+		key := resourceKey(issue)
+		groups[key] = append(groups[key], issue)
+	}
+	return groups
 }
 
-// analyzeIssues triggers LLM analysis for a list of issues
-func (m *Model) analyzeIssues(issues []Issue) tea.Cmd {
-	var cmds []tea.Cmd
-	for _, issue := range issues {
-		if !m.analyzing[issue.Title] {
-			m.analyzing[issue.Title] = true
-			cmds = append(cmds, m.analyzeIssue(issue))
+// resourceKey generates a unique key for a resource
+func resourceKey(issue Issue) string {
+	return issue.ResourceType + "/" + issue.Resource + "/" + issue.Namespace
+}
+
+// analyzeAll groups all unanalyzed issues by resource and analyzes in parallel
+func (m *Model) analyzeAll() tea.Cmd {
+	if len(m.issues) == 0 || m.analyzer == nil {
+		return nil
+	}
+
+	// find unanalyzed issues
+	var unanalyzed []Issue
+	for _, issue := range m.issues {
+		key := issue.Title + issue.Resource
+		if _, analyzed := m.guidance[key]; !analyzed {
+			if !m.analyzing[key] {
+				unanalyzed = append(unanalyzed, issue)
+			}
 		}
 	}
+
+	if len(unanalyzed) == 0 {
+		return nil
+	}
+
+	// group by resource
+	groups := groupByResource(unanalyzed)
+
+	var cmds []tea.Cmd
+	for key, groupIssues := range groups {
+		for _, issue := range groupIssues {
+			m.analyzing[issue.Title+issue.Resource] = true
+		}
+		cmds = append(cmds, m.analyzeResourceGroup(key, groupIssues))
+	}
+
 	if len(cmds) == 0 {
 		return nil
 	}
+
 	return tea.Batch(cmds...)
 }
 
-// analyzeIssue runs LLM analysis for a single issue
-func (m *Model) analyzeIssue(issue Issue) tea.Cmd {
+// analyzeResourceGroup analyzes all issues for one resource in one LLM call
+func (m *Model) analyzeResourceGroup(key string, issues []Issue) tea.Cmd {
 	analyzer := m.analyzer
-	client := m.client
+	c := m.client
 	snapshot := m.snapshot
 
 	return func() tea.Msg {
 		ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
 		defer cancel()
 
-		ctxBuilder := auracontext.New(client)
-		ic, err := ctxBuilder.Build(ctx, snapshot, issue.Resource, issue.Namespace, issue.ResourceType)
-		if err != nil {
-			return analysisResult{issueTitle: issue.Title, err: err}
+		if len(issues) == 0 {
+			return nil
 		}
 
+		// build context using first issue resource info
+		first := issues[0]
+		ctxBuilder := auracontext.New(c)
+		ic, err := ctxBuilder.Build(ctx, snapshot,
+			first.Resource, first.Namespace, first.ResourceType, first.Title)
+		if err != nil {
+			return resourceAnalysisResult{
+				key: key, issues: issues, err: err,
+			}
+		}
+
+		// build LLM context with all issues for this resource
 		llmCtx := &llm.IssueContext{
 			ResourceName:      ic.ResourceName,
 			ResourceNamespace: ic.ResourceNamespace,
 			ResourceKind:      ic.ResourceKind,
-			IssueTitle:        issue.Title,
-			IssueSeverity:     issue.Severity,
+			IssueTitle:        first.Title,
+			IssueSeverity:     first.Severity,
 			Identifiers:       ic.Identifiers,
 			Events:            ic.Events,
 			Logs:              ic.Logs,
@@ -242,25 +344,45 @@ func (m *Model) analyzeIssue(issue Issue) tea.Cmd {
 			ClusterName:       ic.ClusterName,
 		}
 
-		guidance, err := analyzer.Analyze(ctx, llmCtx)
-		return analysisResult{
-			issueTitle: issue.Title,
-			guidance:   guidance,
-			err:        err,
+		// add all issues for this resource
+		for _, issue := range issues {
+			llmCtx.Issues = append(llmCtx.Issues, llm.IssueInput{
+				Title:    issue.Title,
+				Severity: issue.Severity,
+			})
+		}
+
+		guidances, err := analyzer.AnalyzeMultiple(ctx, llmCtx)
+		return resourceAnalysisResult{
+			key:       key,
+			issues:    issues,
+			guidances: guidances,
+			err:       err,
 		}
 	}
 }
 
-// findNewIssues returns issues that weren't in the previous probe
+// filterBySeverity returns issues of a specific severity
+func filterBySeverity(issues []Issue, severity string) []Issue {
+	var filtered []Issue
+	for _, i := range issues {
+		if i.Severity == severity {
+			filtered = append(filtered, i)
+		}
+	}
+	return filtered
+}
+
+// findNewIssues returns issues not seen in previous probe
 func findNewIssues(current, previous []Issue) []Issue {
-	prevTitles := make(map[string]bool)
+	prevKeys := make(map[string]bool)
 	for _, p := range previous {
-		prevTitles[p.Title] = true
+		prevKeys[p.ResourceType+p.Resource+p.Title] = true
 	}
 
 	var newIssues []Issue
 	for _, c := range current {
-		if !prevTitles[c.Title] {
+		if !prevKeys[c.ResourceType+c.Resource+c.Title] {
 			newIssues = append(newIssues, c)
 		}
 	}

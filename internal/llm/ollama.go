@@ -8,7 +8,6 @@ import (
 	"io"
 	"net/http"
 	"strings"
-	"time"
 )
 
 // OllamaAnalyzer implements Analyzer for local ollama
@@ -19,10 +18,13 @@ type OllamaAnalyzer struct {
 
 // NewOllamaAnalyzer creates a new OllamaAnalyzer
 func NewOllamaAnalyzer(endpoint, model string) *OllamaAnalyzer {
-	return &OllamaAnalyzer{
-		endpoint: endpoint,
-		model:    model,
+	if endpoint == "" {
+		endpoint = "http://localhost:11434"
 	}
+	if model == "" {
+		model = "mistral"
+	}
+	return &OllamaAnalyzer{endpoint: endpoint, model: model}
 }
 
 // Name returns the provider name
@@ -30,78 +32,103 @@ func (o *OllamaAnalyzer) Name() string {
 	return fmt.Sprintf("ollama/%s", o.model)
 }
 
-// Analyze sends the issue context to ollama and returns guidance
+type ollamaRequest struct {
+	Model  string `json:"model"`
+	Prompt string `json:"prompt"`
+	Stream bool   `json:"stream"`
+}
+
+type ollamaResponse struct {
+	Response string `json:"response"`
+}
+
+// Analyze runs LLM analysis for a single issue (legacy)
 func (o *OllamaAnalyzer) Analyze(ctx context.Context, ic *IssueContext) (*Guidance, error) {
+	results, err := o.AnalyzeMultiple(ctx, ic)
+	if err != nil {
+		return nil, err
+	}
+	if len(results) == 0 {
+		return nil, fmt.Errorf("no guidance returned")
+	}
+	return results[0], nil
+}
+
+// AnalyzeMultiple runs LLM analysis for all issues in one call
+func (o *OllamaAnalyzer) AnalyzeMultiple(ctx context.Context, ic *IssueContext) ([]*Guidance, error) {
 	prompt := BuildPrompt(ic)
 
-	reqBody := map[string]interface{}{
-		"model":  o.model,
-		"prompt": prompt,
-		"stream": false,
-		"options": map[string]interface{}{
-			"temperature": 0.1, // low temperature for consistent structured output
-		},
+	reqBody := ollamaRequest{
+		Model:  o.model,
+		Prompt: prompt,
+		Stream: false,
 	}
 
-	data, err := json.Marshal(reqBody)
+	body, err := json.Marshal(reqBody)
 	if err != nil {
 		return nil, fmt.Errorf("failed to marshal request: %w", err)
 	}
 
-	httpClient := &http.Client{Timeout: 60 * time.Second}
-
 	req, err := http.NewRequestWithContext(ctx, "POST",
-		fmt.Sprintf("%s/api/generate", o.endpoint),
-		bytes.NewReader(data),
+		o.endpoint+"/api/generate",
+		bytes.NewReader(body),
 	)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create request: %w", err)
 	}
 	req.Header.Set("Content-Type", "application/json")
 
-	resp, err := httpClient.Do(req)
+	client := &http.Client{}
+	resp, err := client.Do(req)
 	if err != nil {
-		return nil, fmt.Errorf("failed to call ollama: %w", err)
+		return nil, fmt.Errorf("ollama request failed: %w", err)
 	}
 	defer resp.Body.Close()
 
-	body, err := io.ReadAll(resp.Body)
+	respBody, err := io.ReadAll(resp.Body)
 	if err != nil {
 		return nil, fmt.Errorf("failed to read response: %w", err)
 	}
 
-	// parse ollama response
-	var ollamaResp struct {
-		Response string `json:"response"`
-	}
-	if err := json.Unmarshal(body, &ollamaResp); err != nil {
+	var ollamaResp ollamaResponse
+	if err := json.Unmarshal(respBody, &ollamaResp); err != nil {
 		return nil, fmt.Errorf("failed to parse ollama response: %w", err)
 	}
 
-	return parseGuidance(ollamaResp.Response)
+	return parseGuidanceArray(ollamaResp.Response)
 }
 
-// parseGuidance parses the JSON guidance from LLM response
-func parseGuidance(response string) (*Guidance, error) {
-	// strip any markdown fences if present
+// parseGuidanceArray parses LLM response as array of guidance
+func parseGuidanceArray(response string) ([]*Guidance, error) {
 	clean := strings.TrimSpace(response)
 	clean = strings.TrimPrefix(clean, "```json")
 	clean = strings.TrimPrefix(clean, "```")
 	clean = strings.TrimSuffix(clean, "```")
 	clean = strings.TrimSpace(clean)
 
-	// find JSON object
-	start := strings.Index(clean, "{")
-	end := strings.LastIndex(clean, "}")
+	// find JSON array
+	start := strings.Index(clean, "[")
+	end := strings.LastIndex(clean, "]")
 	if start == -1 || end == -1 {
-		return nil, fmt.Errorf("no JSON found in response")
+		// fallback: try single object
+		start = strings.Index(clean, "{")
+		end = strings.LastIndex(clean, "}")
+		if start == -1 || end == -1 {
+			return nil, fmt.Errorf("no JSON found in response")
+		}
+		clean = clean[start : end+1]
+		var g Guidance
+		if err := json.Unmarshal([]byte(clean), &g); err != nil {
+			return nil, fmt.Errorf("failed to parse guidance: %w", err)
+		}
+		return []*Guidance{&g}, nil
 	}
+
 	clean = clean[start : end+1]
-
-	var guidance Guidance
-	if err := json.Unmarshal([]byte(clean), &guidance); err != nil {
-		return nil, fmt.Errorf("failed to parse guidance JSON: %w", err)
+	var guidances []*Guidance
+	if err := json.Unmarshal([]byte(clean), &guidances); err != nil {
+		return nil, fmt.Errorf("failed to parse guidance array: %w", err)
 	}
 
-	return &guidance, nil
+	return guidances, nil
 }
