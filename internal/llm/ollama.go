@@ -57,7 +57,6 @@ func (o *OllamaAnalyzer) Analyze(ctx context.Context, ic *IssueContext) (*Guidan
 // AnalyzeMultiple runs LLM analysis for all issues in one call
 func (o *OllamaAnalyzer) AnalyzeMultiple(ctx context.Context, ic *IssueContext) ([]*Guidance, error) {
 	prompt := BuildPrompt(ic)
-
 	reqBody := ollamaRequest{
 		Model:  o.model,
 		Prompt: prompt,

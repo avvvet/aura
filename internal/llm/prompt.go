@@ -7,47 +7,57 @@ import (
 
 // BuildPrompt builds a dynamic natural language prompt from cluster context
 func BuildPrompt(ic *IssueContext) string {
+	loader := NewPromptLoader()
 	var b strings.Builder
 
-	b.WriteString("You are a senior Kubernetes engineer with 10+ years of production experience.\n")
-	b.WriteString("Analyze these live cluster issues and provide precise, actionable guidance.\n\n")
+	// base from file — principles only
+	b.WriteString(loader.LoadBase())
+	b.WriteString("\n\n")
 
-	// issue list
-	b.WriteString("THE ISSUES TO ANALYZE:\n")
+	// issues list — clean titles only
+	b.WriteString("## THE ISSUES TO ANALYZE\n")
 	for i, issue := range ic.Issues {
-		b.WriteString(fmt.Sprintf("%d. [%s] %s\n", i+1, strings.ToUpper(issue.Severity), issue.Title))
+		b.WriteString(fmt.Sprintf("%d. %s\n", i+1, issue.Title))
 	}
 	b.WriteString("\n")
 
-	// dynamic resource description
-	b.WriteString("THE AFFECTED RESOURCE:\n")
+	// dynamic issue description — built in Go per issue type
+	b.WriteString("## ISSUE CONTEXT\n")
+	for _, issue := range ic.Issues {
+		b.WriteString(fmt.Sprintf("### %s\n", issue.Title))
+		b.WriteString(buildIssueDescription(ic, issue.Title))
+		b.WriteString("\n")
+	}
+
+	// resource description
+	b.WriteString("## THE AFFECTED RESOURCE\n")
 	b.WriteString(buildResourceDescription(ic))
 	b.WriteString("\n")
 
-	// issue descriptions
-	b.WriteString("ISSUE CONTEXT:\n")
-	for _, issue := range ic.Issues {
-		b.WriteString(fmt.Sprintf("Issue '%s':\n", issue.Title))
-		b.WriteString(buildIssueDescription(ic, issue.Title))
+	// external guidance from file — additional hints
+	issueContext := loader.LoadIssue(ic.ResourceKind)
+	if issueContext != "" {
+		b.WriteString("## ADDITIONAL GUIDANCE\n")
+		b.WriteString(issueContext)
 		b.WriteString("\n")
 	}
 
 	// events
 	if len(ic.Events) > 0 {
-		b.WriteString("\nRECENT EVENTS:\n")
+		b.WriteString("\n## RECENT EVENTS\n")
 		for _, e := range ic.Events {
-			b.WriteString(fmt.Sprintf("  - %s\n", e))
+			b.WriteString(fmt.Sprintf("- %s\n", e))
 		}
 	}
 
 	// node state
 	if ic.NodeState != "" {
-		b.WriteString(fmt.Sprintf("\nNODE STATE:\n  %s\n", ic.NodeState))
+		b.WriteString(fmt.Sprintf("\n## NODE STATE\n%s\n", ic.NodeState))
 	}
 
 	// logs
 	if len(ic.Logs) > 0 {
-		b.WriteString("\nCONTAINER LOGS (most recent):\n")
+		b.WriteString("\n## CONTAINER LOGS\n")
 		for _, l := range ic.Logs {
 			b.WriteString(fmt.Sprintf("  %s\n", l))
 		}
@@ -58,7 +68,7 @@ func BuildPrompt(ic *IssueContext) string {
 	return b.String()
 }
 
-// buildIssueDescription builds focused description per issue type
+// buildIssueDescription builds focused natural language description per issue type
 func buildIssueDescription(ic *IssueContext, issueTitle string) string {
 	name := ic.ResourceName
 	ns := ic.ResourceNamespace
@@ -69,10 +79,10 @@ func buildIssueDescription(ic *IssueContext, issueTitle string) string {
 	switch issueTitle {
 	case "has no resource limits":
 		return fmt.Sprintf(
-			"  The %s '%s' in namespace '%s' has no CPU or memory limits defined.\n"+
-				"  Current CPU limit: %s\n"+
-				"  Current memory limit: %s\n"+
-				"  Focus ONLY on the missing resource limits — ignore any other issues.",
+			"The %s '%s' in namespace '%s' has no CPU or memory limits defined.\n"+
+				"Current CPU limit: %s\n"+
+				"Current memory limit: %s\n"+
+				"Focus ONLY on the missing resource limits — ignore any other issues.",
 			kind, name, ns,
 			ic.Identifiers["CPU_LIMIT"],
 			ic.Identifiers["MEMORY_LIMIT"],
@@ -81,69 +91,88 @@ func buildIssueDescription(ic *IssueContext, issueTitle string) string {
 	case "using unpinned image tag":
 		if podType == "standalone" {
 			return fmt.Sprintf(
-				"  Standalone pod '%s' in namespace '%s' uses unpinned image: %s\n"+
-					"  IMPORTANT: standalone pod — type MUST be 'fix'\n"+
-					"  correct fix: kubectl delete pod %s -n %s\n"+
-					"  never use kubectl set image on standalone pods.",
-				name, ns, image, name, ns,
+				"Standalone pod '%s' in namespace '%s' uses unpinned image: %s\n"+
+					"This is a STANDALONE pod — not managed by a deployment.\n"+
+					"Fix requires two steps joined with &&:\n"+
+					"Step 1: kubectl delete pod %s -n %s\n"+
+					"Step 2: kubectl run %s --image=%s:<pinned-version> -n %s\n"+
+					"Provide both commands joined with && as a single fix command.",
+				name, ns, image,
+				name, ns,
+				name, ic.Identifiers["IMAGE_BASE"], ns,
 			)
 		}
 		return fmt.Sprintf(
-			"  The %s '%s' in namespace '%s' uses unpinned image: %s\n"+
-				"  Image base: %s\n"+
-				"  Fix: update to pinned version tag.",
+			"The %s '%s' in namespace '%s' uses unpinned image: %s\n"+
+				"Image base: %s\n"+
+				"Fix: update to a pinned version tag using kubectl set image.",
 			kind, name, ns, image,
 			ic.Identifiers["IMAGE_BASE"],
 		)
 
 	case "has no network policy":
 		return fmt.Sprintf(
-			"The namespace '%s' has no NetworkPolicy resources.\n"+
-				"Generate a kubectl command to create a default-deny-all NetworkPolicy.\n"+
-				"Use kubectl apply with inline yaml using a single command.\n"+
-				"Example format: kubectl apply -f - <<'EOF'\napiVersion...\nEOF\n"+
-				"Or use kubectl create with --dry-run piped to apply.",
-			ns,
+			"Namespace '%s' has no NetworkPolicy resources defined.\n"+
+				"All pods communicate freely without restriction.\n"+
+				"Fix: generate kubectl apply with a default-deny-all NetworkPolicy yaml.\n"+
+				"Use namespace '%s' in the yaml metadata.",
+			ns, ns,
 		)
 
 	case "is unattached and billing":
 		return fmt.Sprintf(
-			"  PVC '%s' in namespace '%s' is not mounted by any pod.\n"+
-				"  Fix: delete if no longer needed.",
+			"PVC '%s' in namespace '%s' is not mounted by any pod.\n"+
+				"It is still provisioned and incurring storage costs.\n"+
+				"Fix: delete if no longer needed.",
 			name, ns,
 		)
 
 	case "is idle":
 		return fmt.Sprintf(
-			"  Namespace '%s' has no active workloads.\n"+
-				"  Fix: delete if no longer needed.",
+			"Namespace '%s' has no active workloads.\n"+
+				"Fix: delete if no longer needed.",
 			name,
 		)
 
 	case "running privileged container":
 		return fmt.Sprintf(
-			"  Pod '%s' in namespace '%s' runs a privileged container.\n"+
-				"  type MUST be 'investigate' — fix requires editing deployment yaml.",
+			"Pod '%s' in namespace '%s' runs a privileged container.\n"+
+				"Fix requires editing the deployment spec to remove privileged: true.",
 			name, ns,
 		)
 
 	case "exposing secrets in env vars":
 		return fmt.Sprintf(
-			"  Pod '%s' in namespace '%s' has secrets in plain env vars.\n"+
-				"  type MUST be 'investigate' — fix requires using secretRef in yaml.",
+			"Pod '%s' in namespace '%s' has sensitive values in plain env vars.\n"+
+				"Fix requires updating deployment to use secretKeyRef instead.",
 			name, ns,
 		)
 
 	case "has no TLS configured":
 		return fmt.Sprintf(
-			"  Ingress '%s' in namespace '%s' has no TLS.\n"+
-				"  type MUST be 'investigate' — fix requires editing ingress yaml.",
+			"Ingress '%s' in namespace '%s' has no TLS configuration.\n"+
+				"Traffic is unencrypted.\n"+
+				"Fix: create TLS secret and patch ingress to add TLS section.",
 			name, ns,
+		)
+
+	case "using host network":
+		return fmt.Sprintf(
+			"Pod '%s' in namespace '%s' uses host network.\n"+
+				"This bypasses Kubernetes network isolation.",
+			name, ns,
+		)
+
+	case "is not ready":
+		return fmt.Sprintf(
+			"Node '%s' is in NotReady state.\n"+
+				"Investigate conditions and events to find root cause.",
+			name,
 		)
 
 	default:
 		return fmt.Sprintf(
-			"  Issue '%s' on %s '%s' in namespace '%s'.",
+			"Issue '%s' detected on %s '%s' in namespace '%s'.",
 			issueTitle, kind, name, ns,
 		)
 	}
@@ -196,42 +225,42 @@ func buildResourceDescription(ic *IssueContext) string {
 	if v, ok := ic.Identifiers["NODE_NAME"]; ok {
 		b.WriteString(fmt.Sprintf("- Node: %s\n", v))
 	}
+	if v, ok := ic.Identifiers["INGRESS_HOST"]; ok {
+		b.WriteString(fmt.Sprintf("- Ingress host: %s\n", v))
+	}
+	if v, ok := ic.Identifiers["INGRESS_CLASS"]; ok {
+		b.WriteString(fmt.Sprintf("- Ingress class: %s\n", v))
+	}
+	if v, ok := ic.Identifiers["STORAGE_CLASS"]; ok {
+		b.WriteString(fmt.Sprintf("- Storage class: %s\n", v))
+	}
+	if v, ok := ic.Identifiers["CAPACITY"]; ok {
+		b.WriteString(fmt.Sprintf("- Capacity: %s\n", v))
+	}
 
 	return b.String()
 }
 
+// buildInstructions returns JSON response format instructions
 func buildInstructions(ic *IssueContext) string {
 	issueCount := len(ic.Issues)
 	return fmt.Sprintf(`
+## RESPONSE FORMAT
+
 Respond ONLY with a JSON array of %d guidance objects — one per issue:
 [
   {
-    "issue": "exact issue title from THE ISSUES list above",
+    "issue": "copy the exact title text from THE ISSUES TO ANALYZE above — no brackets, no numbers, no severity prefix",
     "type": "fix or investigate",
     "root_cause": "max 15 words — specific cause from context above",
     "fix_explanation": "max 15 words — what needs to be done",
-    "command": "best kubectl command to fix or investigate the issue",
+    "command": "best kubectl command to fix or investigate",
     "watch_for": "single kubectl command to confirm fix worked",
     "risk": "max 15 words — consequence if not fixed",
     "confidence": "high|medium|low"
   }
 ]
 
-DECISION PRINCIPLE:
-type "fix"         → you can provide a command that directly resolves the issue
-type "investigate" → root cause is unclear and output must be read before fixing
-
-COMMAND PRINCIPLE:
-→ use ONLY exact names, namespaces, images from THE AFFECTED RESOURCE above
-→ never invent values from training knowledge
-→ never suggest :latest as replacement — use <valid-tag> placeholder
-→ never use --grace-period=0 or --force
-→ give your best effort fix command for every issue
-→ multi-line commands are allowed when needed
-→ contractor copies via clipboard so length is not a concern
-→ for resource limits use compact single line:
-  kubectl set resources deployment/RESOURCE_NAME --limits=cpu=500m,memory=512Mi --requests=cpu=100m,memory=128Mi -n NAMESPACE
-
-respond with JSON array only — no markdown, no explanation
+respond with JSON array only — no markdown, no explanation, no preamble
 `, issueCount)
 }

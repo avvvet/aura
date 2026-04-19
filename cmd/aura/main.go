@@ -8,6 +8,7 @@ import (
 
 	"github.com/avvvet/aura/internal/client"
 	"github.com/avvvet/aura/internal/config"
+	"github.com/avvvet/aura/internal/llm"
 	"github.com/avvvet/aura/internal/tui"
 )
 
@@ -18,6 +19,7 @@ func main() {
 		fmt.Fprintf(os.Stderr, "failed to init config: %v\n", err)
 		os.Exit(1)
 	}
+	llm.InstallDefaultPrompts()
 
 	// check for --setup flag or --clear flag
 	for _, arg := range os.Args[1:] {

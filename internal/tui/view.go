@@ -566,6 +566,7 @@ func renderIssues(m Model) string {
 		}
 	}
 
+	b.WriteString("\n")
 	goodTitle := tStyleWarn.Render("GOOD PRACTICE") +
 		"  " + tStyleDivider.Render(strings.Repeat("─", tWidth()-36)) +
 		"  " + tStyleMuted.Render(fmt.Sprintf("%d recommendations", len(warnings)))
