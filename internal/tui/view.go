@@ -30,13 +30,6 @@ var (
 	tStyleMuted  = lipgloss.NewStyle().Foreground(tColorMuted)
 	tStyleBright = lipgloss.NewStyle().Foreground(tColorBright)
 
-	tStyleCmdBox = lipgloss.NewStyle().
-			Foreground(tColorBlue).
-			Background(tColorBgSub).
-			Border(lipgloss.NormalBorder()).
-			BorderForeground(tColorBgGrid).
-			PaddingLeft(1).PaddingRight(1)
-
 	tStyleBoxCrit = lipgloss.NewStyle().
 			Border(lipgloss.RoundedBorder()).
 			BorderForeground(lipgloss.Color("#f8514933")).
@@ -85,6 +78,13 @@ func tDivider() string {
 	return tStyleDivider.Render(strings.Repeat("─", tWidth()))
 }
 
+func render(m Model) string {
+	if m.viewMode == "fix" {
+		return renderFixView(m)
+	}
+	return renderMainView(m)
+}
+
 func renderMainView(m Model) string {
 	var b strings.Builder
 
@@ -97,9 +97,8 @@ func renderMainView(m Model) string {
 	b.WriteString("\n")
 	b.WriteString(tDivider())
 	b.WriteString("\n")
-	b.WriteString(renderIssues(m))
+	b.WriteString(renderIssuesSummary(m))
 	b.WriteString(renderResolved(m))
-	b.WriteString(renderAnalysisHint(m))
 	b.WriteString(tDivider())
 	b.WriteString("\n")
 	b.WriteString(renderTUIFooter(m))
@@ -107,44 +106,179 @@ func renderMainView(m Model) string {
 	return b.String()
 }
 
-func render(m Model) string {
-	if m.viewMode == "analysis" {
-		return renderAnalysisView(m)
-	}
-	return renderMainView(m)
-}
-
-func renderAnalysisHint(m Model) string {
-	var content string
+func renderIssuesSummary(m Model) string {
+	var b strings.Builder
 
 	if m.analyzer == nil {
-		content = tStyleMuted.Render("⚡  run ") +
-			tStyleBlue.Render("aura --setup") +
-			tStyleMuted.Render(" to configure LLM for AI guided fix analysis")
-	} else {
-		content = tStyleOk.Render("⚡  press ") +
-			tStyleBlue.Render("'a'") +
-			tStyleOk.Render(" for AI guided fix analysis") +
-			tStyleMuted.Render("  ·  ") +
-			tStyleMuted.Render(m.analyzer.Name())
+		content := tStyleMuted.Render("⚡  configure LLM to enable AI analysis  ·  run ") +
+			tStyleBlue.Render("aura --setup")
+		b.WriteString(lipgloss.NewStyle().
+			Border(lipgloss.RoundedBorder()).
+			BorderForeground(tColorBgGrid).
+			Padding(0, 1).
+			Width(tWidth()-4).
+			Render(content) + "\n")
+		return b.String()
 	}
 
-	return lipgloss.NewStyle().
-		Border(lipgloss.RoundedBorder()).
-		BorderForeground(lipgloss.Color("#3fb95033")).
-		Padding(0, 1).
-		Width(tWidth()-4).
-		Render(content) + "\n"
+	if m.status == statusAnalyzing || (len(m.analyzing) > 0 && len(m.issues) == 0) {
+		analyzing := len(m.analyzing)
+		content := tStyleWarn.Render("⟳  analyzing cluster") +
+			tStyleMuted.Render(fmt.Sprintf("  ·  %d resources", analyzing))
+		b.WriteString(lipgloss.NewStyle().
+			Border(lipgloss.RoundedBorder()).
+			BorderForeground(lipgloss.Color("#d2992233")).
+			Padding(0, 1).
+			Width(tWidth()-4).
+			Render(content) + "\n\n")
+	}
+
+	if len(m.issues) == 0 && len(m.analyzing) == 0 {
+		b.WriteString(tStyleBoxOk.Render(tStyleOk.Render("✓  cluster is healthy — no issues found")) + "\n\n")
+		return b.String()
+	}
+
+	// show top N issues
+	displayed := topIssues(m.issues, maxMainViewIssues)
+	total := len(m.issues)
+
+	// section headers
+	var critical, security, warning []Issue
+	for _, i := range displayed {
+		switch i.Severity {
+		case "critical":
+			critical = append(critical, i)
+		case "security":
+			security = append(security, i)
+		default:
+			warning = append(warning, i)
+		}
+	}
+
+	issueNum := 1
+
+	// critical
+	if len(critical) > 0 {
+		mustFixTitle := tStyleErr.Render("MUST FIX") +
+			"  " + tStyleDivider.Render(strings.Repeat("─", tWidth()-30)) +
+			"  " + tStyleMuted.Render(fmt.Sprintf("%d critical", len(critical)))
+		b.WriteString(mustFixTitle + "\n\n")
+
+		var inner strings.Builder
+		for i, issue := range critical {
+			inner.WriteString(renderIssueSummaryRow(issue, issueNum))
+			issueNum++
+			if i < len(critical)-1 {
+				inner.WriteString(tStyleDivider.Render(strings.Repeat("─", tWidth()-12)) + "\n")
+			}
+		}
+		b.WriteString(tStyleBoxCrit.Render(inner.String()) + "\n\n")
+	}
+
+	// warnings
+	if len(warning) > 0 {
+		goodTitle := tStyleWarn.Render("GOOD PRACTICE") +
+			"  " + tStyleDivider.Render(strings.Repeat("─", tWidth()-36)) +
+			"  " + tStyleMuted.Render(fmt.Sprintf("%d recommendations", len(warning)))
+		b.WriteString(goodTitle + "\n\n")
+
+		var inner strings.Builder
+		for i, issue := range warning {
+			inner.WriteString(renderIssueSummaryRow(issue, issueNum))
+			issueNum++
+			if i < len(warning)-1 {
+				inner.WriteString(tStyleDivider.Render(strings.Repeat("─", tWidth()-12)) + "\n")
+			}
+		}
+		b.WriteString(tStyleBoxWarn.Render(inner.String()) + "\n\n")
+	}
+
+	// security
+	if len(security) > 0 {
+		tStyleBoxSec := lipgloss.NewStyle().
+			Border(lipgloss.RoundedBorder()).
+			BorderForeground(lipgloss.Color("#bc8cff33")).
+			Padding(0, 1).
+			Width(tWidth() - 4)
+
+		secTitle := tStylePurple.Render("SECURITY") +
+			"  " + tStyleDivider.Render(strings.Repeat("─", tWidth()-28)) +
+			"  " + tStyleMuted.Render(fmt.Sprintf("%d findings", len(security)))
+		b.WriteString(secTitle + "\n\n")
+
+		var inner strings.Builder
+		for i, issue := range security {
+			inner.WriteString(renderIssueSummaryRow(issue, issueNum))
+			issueNum++
+			if i < len(security)-1 {
+				inner.WriteString(tStyleDivider.Render(strings.Repeat("─", tWidth()-12)) + "\n")
+			}
+		}
+		b.WriteString(tStyleBoxSec.Render(inner.String()) + "\n\n")
+	}
+
+	// show more hint
+	if total > maxMainViewIssues {
+		more := total - maxMainViewIssues
+		hint := tStyleMuted.Render(fmt.Sprintf("  %d more issues — press ", more)) +
+			tStyleBlue.Render("'a'") +
+			tStyleMuted.Render(" to see all")
+		b.WriteString(lipgloss.NewStyle().
+			Border(lipgloss.RoundedBorder()).
+			BorderForeground(tColorBgGrid).
+			Padding(0, 1).
+			Width(tWidth()-4).
+			Render(hint) + "\n\n")
+	} else if len(m.issues) > 0 {
+		hint := tStyleOk.Render("⚡  press ") +
+			tStyleBlue.Render("'a'") +
+			tStyleOk.Render(" for detailed fix guidance")
+		b.WriteString(lipgloss.NewStyle().
+			Border(lipgloss.RoundedBorder()).
+			BorderForeground(lipgloss.Color("#3fb95033")).
+			Padding(0, 1).
+			Width(tWidth()-4).
+			Render(hint) + "\n")
+	}
+
+	return b.String()
 }
 
-func renderAnalysisView(m Model) string {
+func renderIssueSummaryRow(issue Issue, num int) string {
+	var icon string
+	var titleStyle lipgloss.Style
+
+	switch issue.Severity {
+	case "critical":
+		icon = tStyleErr.Render("!")
+		titleStyle = tStyleErr
+	case "security":
+		icon = tStylePurple.Render("⚠")
+		titleStyle = tStylePurple
+	default:
+		icon = tStyleWarn.Render("▲")
+		titleStyle = tStyleWarn
+	}
+
+	numStr := tStyleMuted.Render(fmt.Sprintf("%d", num))
+	resType := tStyleMuted.Render(issue.ResourceType + ":")
+	title := titleStyle.Render(issue.Title)
+	meta := tStyleMuted.Render(issue.Meta)
+
+	return fmt.Sprintf("%s  %s  %s  %s\n   %s\n   %s\n",
+		icon, numStr, resType, title,
+		resourceLocation(issue),
+		meta)
+}
+
+func renderFixView(m Model) string {
 	var b strings.Builder
 
 	b.WriteString("\n")
 
 	// header
 	brand := tStyleBright.Render("▸  A U R A") +
-		"  " + tStyleOk.Render("ANALYSIS")
+		"  " + tStyleOk.Render("FIX GUIDANCE")
 	tagline := lipgloss.NewStyle().Foreground(tColorMuted).Italic(true).Render("the light that guides you through darkness")
 
 	providerName := ""
@@ -167,17 +301,15 @@ func renderAnalysisView(m Model) string {
 	lb := lipgloss.NewStyle().Width(lw).Render(left)
 	rb := lipgloss.NewStyle().Width(rw).Align(lipgloss.Right).Render(right)
 
-	headerContent := lipgloss.JoinHorizontal(lipgloss.Top, lb, rb)
-
 	b.WriteString(lipgloss.NewStyle().
 		Border(lipgloss.RoundedBorder()).
 		BorderForeground(lipgloss.Color("#3fb95066")).
 		Padding(0, 1).
 		Width(tWidth() - 4).
-		Render(headerContent))
+		Render(lipgloss.JoinHorizontal(lipgloss.Top, lb, rb)))
 	b.WriteString("\n")
 
-	// analysis content box
+	// fix content
 	tStyleBoxLLM := lipgloss.NewStyle().
 		Border(lipgloss.RoundedBorder()).
 		BorderForeground(lipgloss.Color("#3fb95066")).
@@ -187,15 +319,16 @@ func renderAnalysisView(m Model) string {
 	var inner strings.Builder
 
 	if len(m.issues) == 0 {
-		inner.WriteString(tStyleOk.Render("✓  cluster is healthy — no issues to analyze\n"))
-	} else if m.analyzer == nil {
-		inner.WriteString(tStyleMuted.Render("  no LLM configured — run aura --setup\n"))
-	} else if len(m.guidance) == 0 && len(m.analyzing) > 0 {
-		inner.WriteString(tStyleWarn.Render("⟳  analyzing cluster issues...\n"))
+		if len(m.analyzing) > 0 {
+			inner.WriteString(tStyleWarn.Render("⟳  analyzing cluster issues...\n"))
+		} else {
+			inner.WriteString(tStyleOk.Render("✓  cluster is healthy — no issues found\n"))
+		}
 	} else {
 		for i, issue := range m.issues {
 			var icon string
 			var titleStyle lipgloss.Style
+
 			switch issue.Severity {
 			case "critical":
 				icon = tStyleErr.Render("!")
@@ -211,51 +344,36 @@ func renderAnalysisView(m Model) string {
 			num := tStyleMuted.Render(fmt.Sprintf("%d", i+1))
 			resType := tStyleMuted.Render(issue.ResourceType + ":")
 
-			g, ok := m.guidance[issue.Title+issue.Resource]
-			if !ok {
-				if m.analyzing[issue.Title+issue.Resource] {
-					inner.WriteString(fmt.Sprintf("%s  %s  %s  %s  %s\n\n",
-						icon, num, resType,
-						titleStyle.Render(issue.Title),
-						tStyleWarn.Render("⟳ analyzing..."),
-					))
-				} else {
-					inner.WriteString(fmt.Sprintf("%s  %s  %s  %s\n\n",
-						icon, num, resType,
-						titleStyle.Render(issue.Title),
-					))
-				}
-				continue
-			}
-
-			// issue title line
+			// title line
 			inner.WriteString(fmt.Sprintf("%s  %s  %s  %s\n",
 				icon, num, resType, titleStyle.Render(issue.Title)))
 
+			// resource location
+			inner.WriteString(fmt.Sprintf("   %s\n", resourceLocation(issue)))
+
 			// WHY
-			if g.RootCause != "" {
+			if issue.RootCause != "" {
 				inner.WriteString(fmt.Sprintf("   %s  %s\n",
-					tStyleMuted.Render("WHY:"),
-					tStyleBright.Render(truncate(g.RootCause, 90)),
+					tStyleMuted.Render("WHY:     "),
+					tStyleBright.Render(truncate(issue.RootCause, 90)),
 				))
 			}
 
 			// ACTION / LOOK FOR
-			if g.FixExplanation != "" {
+			if issue.FixExplanation != "" {
 				label := "ACTION:  "
-				if g.Type == "investigate" {
+				if issue.Type == "investigate" {
 					label = "LOOK FOR:"
 				}
 				inner.WriteString(fmt.Sprintf("   %s  %s\n",
 					tStyleMuted.Render(label),
-					tStyleBright.Render(truncate(g.FixExplanation, 90)),
+					tStyleBright.Render(truncate(issue.FixExplanation, 90)),
 				))
 			}
 
-			// FIX / CHECK command — single line truncated
-			if g.Command != "" {
-				// truncate to single line for display
-				displayCmd := g.Command
+			// FIX / CHECK command
+			if issue.Command != "" {
+				displayCmd := issue.Command
 				if idx := strings.Index(displayCmd, "\n"); idx != -1 {
 					displayCmd = displayCmd[:idx]
 				}
@@ -263,7 +381,7 @@ func renderAnalysisView(m Model) string {
 					displayCmd = displayCmd[:85] + "..."
 				}
 
-				if g.Type == "investigate" {
+				if issue.Type == "investigate" {
 					inner.WriteString(fmt.Sprintf("   %s  %s\n",
 						tStyleBlue.Render("🔍 CHECK:"),
 						tStyleBlue.Render(displayCmd),
@@ -275,11 +393,10 @@ func renderAnalysisView(m Model) string {
 					))
 				}
 
-				// copy hint — amber for fix, blue for investigate
+				// copy hint
 				copyWidth := tWidth() - 20
 				var copyHint string
 				if m.copyConfirmIndex == i && m.copyConfirm != "" {
-					// confirmed — green
 					confirmText := "✓ copied to clipboard"
 					padding := copyWidth - len(confirmText) - 4
 					if padding < 0 {
@@ -289,13 +406,12 @@ func renderAnalysisView(m Model) string {
 						"   ╰─ " + confirmText + strings.Repeat("─", padding) + "╯",
 					)
 				} else {
-					// hint — amber for fix, blue for investigate
 					hintText := fmt.Sprintf("press '%d' to copy command", i+1)
 					padding := copyWidth - len(hintText) - 4
 					if padding < 0 {
 						padding = 0
 					}
-					if g.Type == "investigate" {
+					if issue.Type == "investigate" {
 						copyHint = tStyleBlue.Render(
 							"   ╰─ " + hintText + strings.Repeat("─", padding) + "╯",
 						)
@@ -309,18 +425,18 @@ func renderAnalysisView(m Model) string {
 			}
 
 			// RISK
-			if g.Risk != "" {
+			if issue.Risk != "" {
 				inner.WriteString(fmt.Sprintf("   %s  %s\n",
-					tStyleMuted.Render("RISK:"),
-					tStyleWarn.Render(truncate(g.Risk, 90)),
+					tStyleMuted.Render("RISK:    "),
+					tStyleWarn.Render(truncate(issue.Risk, 90)),
 				))
 			}
 
 			// CONFIDENCE
-			if g.Confidence != "" {
+			if issue.Confidence != "" {
 				inner.WriteString(fmt.Sprintf("   %s  %s\n",
 					tStyleMuted.Render("CONFIDENCE:"),
-					confidenceStyle(g.Confidence).Render(g.Confidence),
+					confidenceStyle(issue.Confidence).Render(issue.Confidence),
 				))
 			}
 
@@ -337,7 +453,7 @@ func renderAnalysisView(m Model) string {
 	footerLeft := tStyleMuted.Render("press ") +
 		tStyleBlue.Render("'esc'") +
 		tStyleMuted.Render(" to return  ·  ") +
-		tStyleBlue.Render("'a'") +
+		tStyleBlue.Render("'r'") +
 		tStyleMuted.Render(" to re-analyze  ·  ") +
 		tStyleWarn.Render("1-9") +
 		tStyleMuted.Render(" to copy fix command")
@@ -394,7 +510,7 @@ func renderLiveBar(m Model) string {
 	interval := tStyleMuted.Render("probing every ") + tStyleBlue.Render("30s")
 
 	healthPct := 100
-	if m.snapshot != nil && len(m.issues) > 0 {
+	if len(m.issues) > 0 && m.snapshot != nil {
 		total := len(m.snapshot.Nodes) + len(m.snapshot.Deployments) + len(m.snapshot.Pods)
 		if total > 0 {
 			healthPct = 100 - (len(m.issues) * 100 / total)
@@ -410,6 +526,8 @@ func renderLiveBar(m Model) string {
 		healthState = tStyleMuted.Render("  ·  initializing...")
 	case statusProbing:
 		healthState = tStyleWarn.Render("  ·  probing cluster...")
+	case statusAnalyzing:
+		healthState = tStyleWarn.Render("  ·  ⟳ analyzing with AI...")
 	case statusHealthy:
 		healthState = tStyleOk.Render(fmt.Sprintf("  ·  ✓ cluster healthy  %d%%", healthPct))
 	case statusIssues:
@@ -489,13 +607,13 @@ func renderHealthGrid(m Model) string {
 
 	cells := []cell{
 		{fmt.Sprintf("%d", len(s.Nodes)), "nodes", fmt.Sprintf("%d ready · %d warn", readyNodes, warnNodes), tStyleBlue},
-		{fmt.Sprintf("%d", len(s.Namespaces)), "namespaces", fmt.Sprintf("%d idle", len(s.CostSignals.IdleNamespaces)), tStyleOk},
+		{fmt.Sprintf("%d", len(s.Namespaces)), "namespaces", "active", tStyleOk},
 		{fmt.Sprintf("%d", running), "pods running", fmt.Sprintf("%d pending · %d failed", pending, failed), tStyleOk},
 		{fmt.Sprintf("%d", len(s.Deployments)), "deployments", fmt.Sprintf("%d healthy · %d down", healthyDeploys, downDeploys), tStylePurple},
 		{fmt.Sprintf("%d", len(s.Services)), "services", fmt.Sprintf("%d external", externalSvcs(s)), tStyleBlue},
 		{fmt.Sprintf("%d", len(s.Ingresses)), "ingresses", "all routes", tStyleBlue},
-		{fmt.Sprintf("%d", len(s.PVCs)), "pvcs", fmt.Sprintf("%d unattached", len(s.CostSignals.UnattachedPVCs)), tStyleWarn},
-		{fmt.Sprintf("%d", len(s.CostSignals.PodsWithNoLimits)), "no limits", "deployments", tStyleWarn},
+		{fmt.Sprintf("%d", len(s.PVCs)), "pvcs", "persistent volumes", tStyleWarn},
+		{fmt.Sprintf("%d", len(m.issues)), "issues", fmt.Sprintf("%d analyzing", len(m.analyzing)), tStyleWarn},
 	}
 
 	colW := (tWidth() - 8) / 4
@@ -534,144 +652,6 @@ func renderHealthGrid(m Model) string {
 	return tStyleBoxHealth.Render(health.String())
 }
 
-func renderIssues(m Model) string {
-	var critical []Issue
-	var warnings []Issue
-	var security []Issue
-
-	for _, i := range m.issues {
-		switch i.Severity {
-		case "critical":
-			critical = append(critical, i)
-		case "warning":
-			warnings = append(warnings, i)
-		case "security":
-			security = append(security, i)
-		}
-	}
-
-	var b strings.Builder
-
-	mustFixTitle := tStyleErr.Render("MUST FIX") +
-		"  " + tStyleDivider.Render(strings.Repeat("─", tWidth()-30)) +
-		"  " + tStyleMuted.Render(fmt.Sprintf("%d critical", len(critical)))
-	b.WriteString(mustFixTitle + "\n\n")
-
-	if len(critical) == 0 {
-		b.WriteString(tStyleBoxOk.Render(tStyleOk.Render("✓  no critical issues")) + "\n\n")
-	} else {
-		for i, issue := range critical {
-			b.WriteString(renderIssueCard(issue, i+1))
-			b.WriteString("\n")
-		}
-	}
-
-	b.WriteString("\n")
-	goodTitle := tStyleWarn.Render("GOOD PRACTICE") +
-		"  " + tStyleDivider.Render(strings.Repeat("─", tWidth()-36)) +
-		"  " + tStyleMuted.Render(fmt.Sprintf("%d recommendations", len(warnings)))
-	b.WriteString(goodTitle + "\n\n")
-
-	if len(warnings) == 0 {
-		b.WriteString(tStyleBoxWarn.Render(tStyleOk.Render("✓  no recommendations")) + "\n")
-	} else {
-		var inner strings.Builder
-		for i, issue := range warnings {
-			num := tStyleMuted.Render(fmt.Sprintf("%d", i+1))
-			icon := tStyleWarn.Render("▲")
-			resType := tStyleMuted.Render(issue.ResourceType + ":")
-			title := tStyleWarn.Render(issue.Title)
-			meta := tStyleMuted.Render(issue.Meta)
-
-			inner.WriteString(fmt.Sprintf("%s  %s  %s  %s\n   %s\n   %s\n",
-				icon, num, resType, title,
-				resourceLocation(issue),
-				meta))
-			if i < len(warnings)-1 {
-				inner.WriteString(tStyleDivider.Render(strings.Repeat("─", tWidth()-12)) + "\n")
-			}
-		}
-		b.WriteString(tStyleBoxWarn.Render(inner.String()))
-	}
-	b.WriteString("\n")
-
-	b.WriteString("\n")
-	secTitle := tStylePurple.Render("SECURITY") +
-		"  " + tStyleDivider.Render(strings.Repeat("─", tWidth()-28)) +
-		"  " + tStyleMuted.Render(fmt.Sprintf("%d findings", len(security)))
-	b.WriteString(secTitle + "\n\n")
-
-	tStyleBoxSec := lipgloss.NewStyle().
-		Border(lipgloss.RoundedBorder()).
-		BorderForeground(lipgloss.Color("#bc8cff33")).
-		Padding(0, 1).
-		Width(tWidth() - 4)
-
-	if len(security) == 0 {
-		b.WriteString(tStyleBoxSec.Render(tStyleOk.Render("✓  no security findings")) + "\n")
-	} else {
-		var inner strings.Builder
-		for i, issue := range security {
-			num := tStyleMuted.Render(fmt.Sprintf("%d", i+1))
-			icon := tStylePurple.Render("⚠")
-			resType := tStyleMuted.Render(issue.ResourceType + ":")
-			title := tStylePurple.Render(issue.Title)
-			meta := tStyleMuted.Render(issue.Meta)
-
-			inner.WriteString(fmt.Sprintf("%s  %s  %s  %s\n   %s\n   %s\n",
-				icon, num, resType, title,
-				resourceLocation(issue),
-				meta))
-			if i < len(security)-1 {
-				inner.WriteString(tStyleDivider.Render(strings.Repeat("─", tWidth()-12)) + "\n")
-			}
-		}
-		b.WriteString(tStyleBoxSec.Render(inner.String()))
-	}
-	b.WriteString("\n")
-
-	return b.String()
-}
-
-func externalSvcs(s *model.ClusterSnapshot) int {
-	count := 0
-	for _, svc := range s.Services {
-		if svc.ExternalIP != "" && svc.ExternalIP != "<none>" {
-			count++
-		}
-	}
-	return count
-}
-
-func renderIssueCard(issue Issue, num int) string {
-	var icon string
-	var titleStyle lipgloss.Style
-	var box lipgloss.Style
-
-	switch issue.Severity {
-	case "critical":
-		icon = tStyleErr.Render("!")
-		titleStyle = tStyleErr
-		box = tStyleBoxCrit
-	default:
-		icon = tStyleWarn.Render("▲")
-		titleStyle = tStyleWarn
-		box = tStyleBoxWarn
-	}
-
-	numStr := tStyleMuted.Render(fmt.Sprintf("%d", num))
-	resType := tStyleMuted.Render(issue.ResourceType + ":")
-	title := titleStyle.Render(issue.Title)
-	meta := tStyleMuted.Render(issue.Meta)
-
-	content := fmt.Sprintf("%s  %s  %s  %s\n   %s\n   %s",
-		icon, numStr, resType, title,
-		resourceLocation(issue),
-		meta)
-
-	return box.Render(content)
-}
-
 func renderResolved(m Model) string {
 	if len(m.resolved) == 0 {
 		return ""
@@ -696,13 +676,13 @@ func renderResolved(m Model) string {
 }
 
 func renderTUIFooter(m Model) string {
-	left := tStyleMuted.Render("aura v0.1.0  ·  github.com/avvvet/aura  ·  ") +
+	left := tStyleMuted.Render("aura v0.2.0  ·  github.com/avvvet/aura  ·  ") +
 		tStyleBlue.Render("ctrl+c") +
 		tStyleMuted.Render(" to exit")
 
 	right := tStyleMuted.Render(fmt.Sprintf("probe #%d  ·  collected in ", m.probeCount)) +
 		tStyleOk.Render(fmt.Sprintf("%dms", m.probeTimeMs)) +
-		tStyleMuted.Render(fmt.Sprintf("  ·  %d errors", len(m.errors)))
+		tStyleMuted.Render(fmt.Sprintf("  ·  %d analyzing", len(m.analyzing)))
 
 	w := tWidth()
 	rw := 50
@@ -714,23 +694,14 @@ func renderTUIFooter(m Model) string {
 	return lipgloss.JoinHorizontal(lipgloss.Top, lb, rb) + "\n"
 }
 
-func confidenceStyle(confidence string) lipgloss.Style {
-	switch confidence {
-	case "high":
-		return tStyleOk
-	case "medium":
-		return tStyleWarn
-	default:
-		return tStyleErr
+func externalSvcs(s *model.ClusterSnapshot) int {
+	count := 0
+	for _, svc := range s.Services {
+		if svc.ExternalIP != "" && svc.ExternalIP != "<none>" {
+			count++
+		}
 	}
-}
-
-func truncate(s string, max int) string {
-	s = strings.ReplaceAll(s, "\n", " ")
-	if len(s) <= max {
-		return s
-	}
-	return s[:max-3] + "..."
+	return count
 }
 
 func resourceLocation(issue Issue) string {
@@ -741,35 +712,13 @@ func resourceLocation(issue Issue) string {
 		tStyleMuted.Render("   namespace: ") + tStyleBright.Render(issue.Namespace)
 }
 
-func formatCommand(cmd string) string {
-	if len(cmd) <= 90 {
-		return cmd
+func confidenceStyle(confidence string) lipgloss.Style {
+	switch confidence {
+	case "high":
+		return tStyleOk
+	case "medium":
+		return tStyleWarn
+	default:
+		return tStyleErr
 	}
-
-	// extract -n flag to own line
-	nFlag := ""
-	if idx := strings.LastIndex(cmd, " -n "); idx != -1 {
-		nFlag = " \\\n  -n " + strings.TrimSpace(cmd[idx+4:])
-		cmd = strings.TrimSpace(cmd[:idx])
-	}
-
-	// split on " --" to keep flag=value together
-	parts := strings.SplitN(cmd, " --", -1)
-	if len(parts) <= 1 {
-		return cmd + nFlag
-	}
-
-	result := parts[0] + " \\\n"
-	for i, part := range parts[1:] {
-		isLast := i == len(parts)-2
-		if isLast && nFlag == "" {
-			result += "  --" + strings.TrimSpace(part)
-		} else if isLast {
-			result += "  --" + strings.TrimSpace(part)
-		} else {
-			result += "  --" + strings.TrimSpace(part) + " \\\n"
-		}
-	}
-
-	return strings.TrimRight(result, " ") + nFlag
 }

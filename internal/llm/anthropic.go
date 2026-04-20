@@ -18,34 +18,24 @@ type AnthropicAnalyzer struct {
 
 // NewAnthropicAnalyzer creates a new AnthropicAnalyzer
 func NewAnthropicAnalyzer(endpoint, model, apiKey string) *AnthropicAnalyzer {
-	return &AnthropicAnalyzer{
-		endpoint: endpoint,
-		model:    model,
-		apiKey:   apiKey,
+	if endpoint == "" {
+		endpoint = "https://api.anthropic.com"
 	}
+	if model == "" {
+		model = "claude-sonnet-4-6"
+	}
+	return &AnthropicAnalyzer{endpoint: endpoint, model: model, apiKey: apiKey}
 }
 
 // Name returns the provider name
-func (o *AnthropicAnalyzer) Name() string {
-	return fmt.Sprintf("anthropic/%s", o.model)
+func (a *AnthropicAnalyzer) Name() string {
+	return fmt.Sprintf("anthropic/%s", a.model)
 }
 
-// Analyze sends the issue context to Anthropic and returns guidance
-// Analyze runs single issue analysis
-func (a *AnthropicAnalyzer) Analyze(ctx context.Context, ic *IssueContext) (*Guidance, error) {
-	results, err := a.AnalyzeMultiple(ctx, ic)
-	if err != nil {
-		return nil, err
-	}
-	if len(results) == 0 {
-		return nil, fmt.Errorf("no guidance returned")
-	}
-	return results[0], nil
-}
-
-// AnalyzeMultiple runs analysis for all issues in one call
-func (a *AnthropicAnalyzer) AnalyzeMultiple(ctx context.Context, ic *IssueContext) ([]*Guidance, error) {
-	prompt := BuildPrompt(ic)
+// Analyze detects and explains all issues for a resource
+func (a *AnthropicAnalyzer) Analyze(ctx context.Context, ic *IssueContext) ([]*Issue, error) {
+	prompt := BuildDetectPrompt(ic)
+	DebugPrompt(prompt)
 
 	reqBody := map[string]interface{}{
 		"model":      a.model,
@@ -96,5 +86,6 @@ func (a *AnthropicAnalyzer) AnalyzeMultiple(ctx context.Context, ic *IssueContex
 		return nil, fmt.Errorf("no content in response")
 	}
 
-	return parseGuidanceArray(anthropicResp.Content[0].Text)
+	DebugResponse(anthropicResp.Content[0].Text)
+	return parseIssues(anthropicResp.Content[0].Text)
 }

@@ -22,7 +22,7 @@ func NewOllamaAnalyzer(endpoint, model string) *OllamaAnalyzer {
 		endpoint = "http://localhost:11434"
 	}
 	if model == "" {
-		model = "mistral"
+		model = "gemma3:4b"
 	}
 	return &OllamaAnalyzer{endpoint: endpoint, model: model}
 }
@@ -42,21 +42,11 @@ type ollamaResponse struct {
 	Response string `json:"response"`
 }
 
-// Analyze runs LLM analysis for a single issue (legacy)
-func (o *OllamaAnalyzer) Analyze(ctx context.Context, ic *IssueContext) (*Guidance, error) {
-	results, err := o.AnalyzeMultiple(ctx, ic)
-	if err != nil {
-		return nil, err
-	}
-	if len(results) == 0 {
-		return nil, fmt.Errorf("no guidance returned")
-	}
-	return results[0], nil
-}
+// Analyze detects and explains all issues for a resource
+func (o *OllamaAnalyzer) Analyze(ctx context.Context, ic *IssueContext) ([]*Issue, error) {
+	prompt := BuildDetectPrompt(ic)
+	DebugPrompt(prompt)
 
-// AnalyzeMultiple runs LLM analysis for all issues in one call
-func (o *OllamaAnalyzer) AnalyzeMultiple(ctx context.Context, ic *IssueContext) ([]*Guidance, error) {
-	prompt := BuildPrompt(ic)
 	reqBody := ollamaRequest{
 		Model:  o.model,
 		Prompt: prompt,
@@ -94,40 +84,30 @@ func (o *OllamaAnalyzer) AnalyzeMultiple(ctx context.Context, ic *IssueContext) 
 		return nil, fmt.Errorf("failed to parse ollama response: %w", err)
 	}
 
-	return parseGuidanceArray(ollamaResp.Response)
+	DebugResponse(ollamaResp.Response)
+	return parseIssues(ollamaResp.Response)
 }
 
-// parseGuidanceArray parses LLM response as array of guidance
-func parseGuidanceArray(response string) ([]*Guidance, error) {
+// parseIssues parses LLM response as array of issues
+func parseIssues(response string) ([]*Issue, error) {
 	clean := strings.TrimSpace(response)
 	clean = strings.TrimPrefix(clean, "```json")
 	clean = strings.TrimPrefix(clean, "```")
 	clean = strings.TrimSuffix(clean, "```")
 	clean = strings.TrimSpace(clean)
 
-	// find JSON array
 	start := strings.Index(clean, "[")
 	end := strings.LastIndex(clean, "]")
 	if start == -1 || end == -1 {
-		// fallback: try single object
-		start = strings.Index(clean, "{")
-		end = strings.LastIndex(clean, "}")
-		if start == -1 || end == -1 {
-			return nil, fmt.Errorf("no JSON found in response")
-		}
-		clean = clean[start : end+1]
-		var g Guidance
-		if err := json.Unmarshal([]byte(clean), &g); err != nil {
-			return nil, fmt.Errorf("failed to parse guidance: %w", err)
-		}
-		return []*Guidance{&g}, nil
+		// empty or no issues
+		return []*Issue{}, nil
 	}
 
 	clean = clean[start : end+1]
-	var guidances []*Guidance
-	if err := json.Unmarshal([]byte(clean), &guidances); err != nil {
-		return nil, fmt.Errorf("failed to parse guidance array: %w", err)
+	var issues []*Issue
+	if err := json.Unmarshal([]byte(clean), &issues); err != nil {
+		return nil, fmt.Errorf("failed to parse issues: %w", err)
 	}
 
-	return guidances, nil
+	return issues, nil
 }
