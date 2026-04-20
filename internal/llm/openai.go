@@ -18,11 +18,13 @@ type OpenAIAnalyzer struct {
 
 // NewOpenAIAnalyzer creates a new OpenAIAnalyzer
 func NewOpenAIAnalyzer(endpoint, model, apiKey string) *OpenAIAnalyzer {
-	return &OpenAIAnalyzer{
-		endpoint: endpoint,
-		model:    model,
-		apiKey:   apiKey,
+	if endpoint == "" {
+		endpoint = "https://api.openai.com/v1"
 	}
+	if model == "" {
+		model = "gpt-4o"
+	}
+	return &OpenAIAnalyzer{endpoint: endpoint, model: model, apiKey: apiKey}
 }
 
 // Name returns the provider name
@@ -30,22 +32,10 @@ func (o *OpenAIAnalyzer) Name() string {
 	return fmt.Sprintf("openai/%s", o.model)
 }
 
-// Analyze sends the issue context to OpenAI and returns guidance
-// Analyze runs single issue analysis
-func (o *OpenAIAnalyzer) Analyze(ctx context.Context, ic *IssueContext) (*Guidance, error) {
-	results, err := o.AnalyzeMultiple(ctx, ic)
-	if err != nil {
-		return nil, err
-	}
-	if len(results) == 0 {
-		return nil, fmt.Errorf("no guidance returned")
-	}
-	return results[0], nil
-}
-
-// AnalyzeMultiple runs analysis for all issues in one call
-func (o *OpenAIAnalyzer) AnalyzeMultiple(ctx context.Context, ic *IssueContext) ([]*Guidance, error) {
-	prompt := BuildPrompt(ic)
+// Analyze detects and explains all issues for a resource
+func (o *OpenAIAnalyzer) Analyze(ctx context.Context, ic *IssueContext) ([]*Issue, error) {
+	prompt := BuildDetectPrompt(ic)
+	DebugPrompt(prompt)
 
 	reqBody := map[string]interface{}{
 		"model": o.model,
@@ -97,5 +87,6 @@ func (o *OpenAIAnalyzer) AnalyzeMultiple(ctx context.Context, ic *IssueContext) 
 		return nil, fmt.Errorf("no choices in response")
 	}
 
-	return parseGuidanceArray(openaiResp.Choices[0].Message.Content)
+	DebugResponse(openaiResp.Choices[0].Message.Content)
+	return parseIssues(openaiResp.Choices[0].Message.Content)
 }

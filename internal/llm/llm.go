@@ -4,8 +4,7 @@ import "context"
 
 // Analyzer defines the interface all LLM providers must implement
 type Analyzer interface {
-	Analyze(ctx context.Context, ic *IssueContext) (*Guidance, error)
-	AnalyzeMultiple(ctx context.Context, ic *IssueContext) ([]*Guidance, error)
+	Analyze(ctx context.Context, ic *IssueContext) ([]*Issue, error)
 	Name() string
 }
 
@@ -14,30 +13,27 @@ type IssueContext struct {
 	ResourceName      string
 	ResourceNamespace string
 	ResourceKind      string
-	IssueTitle        string
-	IssueSeverity     string
-	Issues            []IssueInput
 	Identifiers       map[string]string
 	Events            []string
 	Logs              []string
 	NodeState         string
 	ClusterName       string
+	PolicyContext     string // from skills files
 }
 
-// IssueInput represents a single issue to analyze
-type IssueInput struct {
-	Title    string
-	Severity string
-}
-
-// Guidance is the structured response from the LLM per issue
-type Guidance struct {
-	Issue          string `json:"issue"`
-	Type           string `json:"type"`
+// Issue is what LLM returns — detected + explained
+type Issue struct {
+	Severity       string `json:"severity"`
+	ResourceType   string `json:"resource_type"`
+	Title          string `json:"title"`
+	Resource       string `json:"resource"`
+	Namespace      string `json:"namespace"`
+	Meta           string `json:"meta"`
 	RootCause      string `json:"root_cause"`
 	FixExplanation string `json:"fix_explanation"`
 	Command        string `json:"command"`
 	WatchFor       string `json:"watch_for"`
 	Risk           string `json:"risk"`
 	Confidence     string `json:"confidence"`
+	Type           string `json:"type"`
 }

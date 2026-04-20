@@ -37,11 +37,15 @@ func main() {
 			}
 			fmt.Println("config cleared")
 			return
+		case "--debug":
+			llm.EnableDebug()
 		}
 	}
 
-	// run setup if LLM not configured
+	// LLM is required for aura to work
 	if !cfgManager.IsLLMConfigured() {
+		fmt.Println("aura requires an LLM to analyze your cluster.")
+		fmt.Println("let's configure one now.\n")
 		result, err := config.RunSetup(cfgManager)
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "setup failed: %v\n", err)

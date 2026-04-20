@@ -9,25 +9,11 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
 	"github.com/avvvet/aura/internal/client"
+	"github.com/avvvet/aura/internal/llm"
 	"github.com/avvvet/aura/internal/model"
 )
 
-// IssueContext holds rich context for a specific issue
-type IssueContext struct {
-	ResourceName      string
-	ResourceNamespace string
-	ResourceKind      string
-	IssueTitle        string
-	IssueSeverity     string
-	Identifiers       map[string]string
-	Events            []string
-	Logs              []string
-	NodeState         string
-	ClusterName       string
-	Context           string
-}
-
-// Builder fetches rich context per issue from the cluster
+// Builder fetches rich context per resource from the cluster
 type Builder struct {
 	client *client.Client
 }
@@ -37,21 +23,23 @@ func New(c *client.Client) *Builder {
 	return &Builder{client: c}
 }
 
-// Build fetches context specific to the issue type
-func (b *Builder) Build(ctx context.Context, snapshot *model.ClusterSnapshot, resourceName, namespace, kind, issueTitle string) (*IssueContext, error) {
-	ic := &IssueContext{
+// Build fetches rich context for a resource
+func (b *Builder) Build(ctx context.Context, snapshot *model.ClusterSnapshot, resourceName, namespace, kind string) (*llm.IssueContext, error) {
+	ic := &llm.IssueContext{
 		ResourceName:      resourceName,
 		ResourceNamespace: namespace,
 		ResourceKind:      kind,
-		IssueTitle:        issueTitle,
 		ClusterName:       snapshot.ClusterName,
-		Context:           snapshot.Context,
 		Identifiers:       make(map[string]string),
 	}
 
 	ic.Identifiers["RESOURCE_KIND"] = kind
 	ic.Identifiers["RESOURCE_NAME"] = resourceName
 	ic.Identifiers["NAMESPACE"] = namespace
+
+	// load policy context from skills file
+	loader := llm.NewPromptLoader()
+	ic.PolicyContext = loader.LoadIssue(kind)
 
 	switch strings.ToLower(kind) {
 	case "deployment":
@@ -73,8 +61,8 @@ func (b *Builder) Build(ctx context.Context, snapshot *model.ClusterSnapshot, re
 	return ic, nil
 }
 
-// enrichDeploymentContext fetches context specific to the deployment issue type
-func (b *Builder) enrichDeploymentContext(ctx context.Context, ic *IssueContext, snapshot *model.ClusterSnapshot) {
+// enrichDeploymentContext fetches full context for a deployment
+func (b *Builder) enrichDeploymentContext(ctx context.Context, ic *llm.IssueContext, snapshot *model.ClusterSnapshot) {
 	deploy, err := b.client.Kubernetes.AppsV1().
 		Deployments(ic.ResourceNamespace).
 		Get(ctx, ic.ResourceName, metav1.GetOptions{})
@@ -82,23 +70,25 @@ func (b *Builder) enrichDeploymentContext(ctx context.Context, ic *IssueContext,
 		return
 	}
 
-	// always include replica status
+	// replica count
 	if deploy.Spec.Replicas != nil {
 		ic.Identifiers["REPLICA_COUNT"] = fmt.Sprintf("%d", *deploy.Spec.Replicas)
-		ic.Events = append(ic.Events,
-			fmt.Sprintf("replicas: desired=%d ready=%d available=%d",
-				*deploy.Spec.Replicas,
-				deploy.Status.ReadyReplicas,
-				deploy.Status.AvailableReplicas,
-			),
-		)
 	}
 
-	// always include container basic info
+	// replica status
+	ic.Events = append(ic.Events,
+		fmt.Sprintf("replicas: desired=%d ready=%d available=%d updated=%d",
+			*deploy.Spec.Replicas,
+			deploy.Status.ReadyReplicas,
+			deploy.Status.AvailableReplicas,
+			deploy.Status.UpdatedReplicas,
+		),
+	)
+
+	// container info
 	for _, c := range deploy.Spec.Template.Spec.Containers {
 		ic.Identifiers["CONTAINER_NAME"] = c.Name
 		ic.Identifiers["CURRENT_IMAGE"] = c.Image
-
 		parts := strings.SplitN(c.Image, ":", 2)
 		ic.Identifiers["IMAGE_BASE"] = parts[0]
 		if len(parts) == 2 {
@@ -107,55 +97,51 @@ func (b *Builder) enrichDeploymentContext(ctx context.Context, ic *IssueContext,
 			ic.Identifiers["CURRENT_TAG"] = "latest"
 		}
 
+		if c.Resources.Limits != nil {
+			ic.Identifiers["CPU_LIMIT"] = c.Resources.Limits.Cpu().String()
+			ic.Identifiers["MEMORY_LIMIT"] = c.Resources.Limits.Memory().String()
+			ic.Events = append(ic.Events,
+				fmt.Sprintf("container '%s' limits: cpu=%s memory=%s",
+					c.Name,
+					c.Resources.Limits.Cpu().String(),
+					c.Resources.Limits.Memory().String(),
+				),
+			)
+		} else {
+			ic.Identifiers["CPU_LIMIT"] = "none"
+			ic.Identifiers["MEMORY_LIMIT"] = "none"
+			ic.Events = append(ic.Events,
+				fmt.Sprintf("container '%s' limits: none", c.Name),
+			)
+		}
+
+		if c.Resources.Requests != nil {
+			ic.Identifiers["CPU_REQUEST"] = c.Resources.Requests.Cpu().String()
+			ic.Identifiers["MEMORY_REQUEST"] = c.Resources.Requests.Memory().String()
+			ic.Events = append(ic.Events,
+				fmt.Sprintf("container '%s' requests: cpu=%s memory=%s",
+					c.Name,
+					c.Resources.Requests.Cpu().String(),
+					c.Resources.Requests.Memory().String(),
+				),
+			)
+		} else {
+			ic.Identifiers["CPU_REQUEST"] = "none"
+			ic.Identifiers["MEMORY_REQUEST"] = "none"
+			ic.Events = append(ic.Events,
+				fmt.Sprintf("container '%s' requests: none", c.Name),
+			)
+		}
+
 		ic.Events = append(ic.Events,
 			fmt.Sprintf("container '%s' image: %s", c.Name, c.Image),
 		)
-
-		// limits context — only for limits issues
-		if strings.Contains(ic.IssueTitle, "no resource limits") {
-			if c.Resources.Limits != nil {
-				ic.Identifiers["CPU_LIMIT"] = c.Resources.Limits.Cpu().String()
-				ic.Identifiers["MEMORY_LIMIT"] = c.Resources.Limits.Memory().String()
-				ic.Events = append(ic.Events,
-					fmt.Sprintf("container '%s' limits: cpu=%s memory=%s",
-						c.Name,
-						c.Resources.Limits.Cpu().String(),
-						c.Resources.Limits.Memory().String(),
-					),
-				)
-			} else {
-				ic.Identifiers["CPU_LIMIT"] = "none"
-				ic.Identifiers["MEMORY_LIMIT"] = "none"
-				ic.Events = append(ic.Events,
-					fmt.Sprintf("container '%s' limits: none — no cpu or memory limits set", c.Name),
-				)
-			}
-			if c.Resources.Requests != nil {
-				ic.Identifiers["CPU_REQUEST"] = c.Resources.Requests.Cpu().String()
-				ic.Identifiers["MEMORY_REQUEST"] = c.Resources.Requests.Memory().String()
-				ic.Events = append(ic.Events,
-					fmt.Sprintf("container '%s' requests: cpu=%s memory=%s",
-						c.Name,
-						c.Resources.Requests.Cpu().String(),
-						c.Resources.Requests.Memory().String(),
-					),
-				)
-			} else {
-				ic.Identifiers["CPU_REQUEST"] = "none"
-				ic.Identifiers["MEMORY_REQUEST"] = "none"
-				ic.Events = append(ic.Events,
-					fmt.Sprintf("container '%s' requests: none", c.Name),
-				)
-			}
-		}
 	}
 
-	// pod states — only for availability/health issues not limits
-	if !strings.Contains(ic.IssueTitle, "no resource limits") {
-		b.enrichDeploymentPodStates(ctx, ic, snapshot)
-	}
+	// always include pod states — LLM decides what matters
+	b.enrichDeploymentPodStates(ctx, ic, snapshot)
 
-	// warning events — always useful max 10
+	// warning events — max 10
 	events, err := b.client.Kubernetes.CoreV1().Events(ic.ResourceNamespace).List(ctx, metav1.ListOptions{
 		FieldSelector: fmt.Sprintf("involvedObject.name=%s", ic.ResourceName),
 	})
@@ -163,11 +149,6 @@ func (b *Builder) enrichDeploymentContext(ctx context.Context, ic *IssueContext,
 		count := 0
 		for _, e := range events.Items {
 			if e.Type == "Warning" && count < 10 {
-				// for limits issue skip image pull events
-				if strings.Contains(ic.IssueTitle, "no resource limits") &&
-					strings.Contains(strings.ToLower(e.Reason), "image") {
-					continue
-				}
 				ic.Events = append(ic.Events,
 					fmt.Sprintf("[Warning] %s: %s", e.Reason, e.Message),
 				)
@@ -177,9 +158,8 @@ func (b *Builder) enrichDeploymentContext(ctx context.Context, ic *IssueContext,
 	}
 }
 
-// enrichDeploymentPodStates fetches pod states for availability issues
-func (b *Builder) enrichDeploymentPodStates(ctx context.Context, ic *IssueContext, snapshot *model.ClusterSnapshot) {
-	// use snapshot pods — already collected, no extra API call
+// enrichDeploymentPodStates fetches pod states for a deployment
+func (b *Builder) enrichDeploymentPodStates(ctx context.Context, ic *llm.IssueContext, snapshot *model.ClusterSnapshot) {
 	for _, p := range snapshot.Pods {
 		if p.Namespace != ic.ResourceNamespace || p.OwnerName != ic.ResourceName {
 			continue
@@ -210,8 +190,8 @@ func (b *Builder) enrichDeploymentPodStates(ctx context.Context, ic *IssueContex
 	}
 }
 
-// enrichPodContext fetches focused context for a standalone pod issue
-func (b *Builder) enrichPodContext(ctx context.Context, ic *IssueContext) {
+// enrichPodContext fetches focused context for a standalone pod
+func (b *Builder) enrichPodContext(ctx context.Context, ic *llm.IssueContext) {
 	pod, err := b.client.Kubernetes.CoreV1().
 		Pods(ic.ResourceNamespace).
 		Get(ctx, ic.ResourceName, metav1.GetOptions{})
@@ -248,6 +228,14 @@ func (b *Builder) enrichPodContext(ctx context.Context, ic *IssueContext) {
 		ic.Events = append(ic.Events,
 			fmt.Sprintf("container '%s' image: %s", c.Name, c.Image),
 		)
+
+		if c.Resources.Limits != nil {
+			ic.Identifiers["CPU_LIMIT"] = c.Resources.Limits.Cpu().String()
+			ic.Identifiers["MEMORY_LIMIT"] = c.Resources.Limits.Memory().String()
+		} else {
+			ic.Identifiers["CPU_LIMIT"] = "none"
+			ic.Identifiers["MEMORY_LIMIT"] = "none"
+		}
 	}
 
 	// pod phase
@@ -299,7 +287,7 @@ func (b *Builder) enrichPodContext(ctx context.Context, ic *IssueContext) {
 		}
 	}
 
-	// logs — last 20 lines
+	// current logs — last 20 lines
 	tailLines := int64(20)
 	logs, err := b.client.Kubernetes.CoreV1().
 		Pods(ic.ResourceNamespace).
@@ -314,7 +302,7 @@ func (b *Builder) enrichPodContext(ctx context.Context, ic *IssueContext) {
 		}
 	}
 
-	// previous logs
+	// previous container logs
 	prevLogs, err := b.client.Kubernetes.CoreV1().
 		Pods(ic.ResourceNamespace).
 		GetLogs(ic.ResourceName, &corev1.PodLogOptions{
@@ -352,8 +340,9 @@ func (b *Builder) enrichPodContext(ctx context.Context, ic *IssueContext) {
 	}
 }
 
-// enrichNamespaceContext fetches focused context for a namespace issue
-func (b *Builder) enrichNamespaceContext(ctx context.Context, ic *IssueContext) {
+// enrichNamespaceContext fetches focused context for a namespace
+func (b *Builder) enrichNamespaceContext(ctx context.Context, ic *llm.IssueContext) {
+	// existing network policies
 	policies, err := b.client.Kubernetes.NetworkingV1().
 		NetworkPolicies(ic.ResourceNamespace).
 		List(ctx, metav1.ListOptions{})
@@ -365,12 +354,13 @@ func (b *Builder) enrichNamespaceContext(ctx context.Context, ic *IssueContext) 
 		} else {
 			for _, p := range policies.Items {
 				ic.Events = append(ic.Events,
-					fmt.Sprintf("existing policy: %s", p.Name),
+					fmt.Sprintf("existing network policy: %s", p.Name),
 				)
 			}
 		}
 	}
 
+	// pod count
 	pods, err := b.client.Kubernetes.CoreV1().
 		Pods(ic.ResourceNamespace).
 		List(ctx, metav1.ListOptions{})
@@ -380,10 +370,24 @@ func (b *Builder) enrichNamespaceContext(ctx context.Context, ic *IssueContext) 
 			fmt.Sprintf("pods in namespace: %d", len(pods.Items)),
 		)
 	}
+
+	// resource quotas
+	quotas, err := b.client.Kubernetes.CoreV1().
+		ResourceQuotas(ic.ResourceNamespace).
+		List(ctx, metav1.ListOptions{})
+	if err == nil && len(quotas.Items) > 0 {
+		for _, q := range quotas.Items {
+			ic.Events = append(ic.Events,
+				fmt.Sprintf("resource quota: %s", q.Name),
+			)
+		}
+	} else {
+		ic.Events = append(ic.Events, "no resource quotas defined")
+	}
 }
 
-// enrichIngressContext fetches context for an ingress issue
-func (b *Builder) enrichIngressContext(ctx context.Context, ic *IssueContext) {
+// enrichIngressContext fetches context for an ingress
+func (b *Builder) enrichIngressContext(ctx context.Context, ic *llm.IssueContext) {
 	ing, err := b.client.Kubernetes.NetworkingV1().
 		Ingresses(ic.ResourceNamespace).
 		Get(ctx, ic.ResourceName, metav1.GetOptions{})
@@ -393,6 +397,10 @@ func (b *Builder) enrichIngressContext(ctx context.Context, ic *IssueContext) {
 
 	if len(ing.Spec.TLS) == 0 {
 		ic.Events = append(ic.Events, "ingress has no TLS configuration")
+	} else {
+		ic.Events = append(ic.Events,
+			fmt.Sprintf("ingress has %d TLS configurations", len(ing.Spec.TLS)),
+		)
 	}
 
 	for _, rule := range ing.Spec.Rules {
@@ -410,8 +418,8 @@ func (b *Builder) enrichIngressContext(ctx context.Context, ic *IssueContext) {
 	}
 }
 
-// enrichPVCContext fetches context for a PVC issue
-func (b *Builder) enrichPVCContext(ctx context.Context, ic *IssueContext) {
+// enrichPVCContext fetches context for a PVC
+func (b *Builder) enrichPVCContext(ctx context.Context, ic *llm.IssueContext) {
 	pvc, err := b.client.Kubernetes.CoreV1().
 		PersistentVolumeClaims(ic.ResourceNamespace).
 		Get(ctx, ic.ResourceName, metav1.GetOptions{})
@@ -437,10 +445,32 @@ func (b *Builder) enrichPVCContext(ctx context.Context, ic *IssueContext) {
 			fmt.Sprintf("capacity: %s", storage.String()),
 		)
 	}
+
+	// check if mounted by any pod
+	pods, err := b.client.Kubernetes.CoreV1().
+		Pods(ic.ResourceNamespace).
+		List(ctx, metav1.ListOptions{})
+	if err == nil {
+		mounted := false
+		for _, pod := range pods.Items {
+			for _, vol := range pod.Spec.Volumes {
+				if vol.PersistentVolumeClaim != nil &&
+					vol.PersistentVolumeClaim.ClaimName == ic.ResourceName {
+					mounted = true
+					ic.Events = append(ic.Events,
+						fmt.Sprintf("mounted by pod: %s", pod.Name),
+					)
+				}
+			}
+		}
+		if !mounted {
+			ic.Events = append(ic.Events, "pvc is not mounted by any pod")
+		}
+	}
 }
 
-// enrichNodeContext fetches context for a node issue
-func (b *Builder) enrichNodeContext(ctx context.Context, ic *IssueContext) {
+// enrichNodeContext fetches context for a node
+func (b *Builder) enrichNodeContext(ctx context.Context, ic *llm.IssueContext) {
 	node, err := b.client.Kubernetes.CoreV1().
 		Nodes().Get(ctx, ic.ResourceName, metav1.GetOptions{})
 	if err != nil {
@@ -462,6 +492,15 @@ func (b *Builder) enrichNodeContext(ctx context.Context, ic *IssueContext) {
 		node.Status.Capacity.Pods().String(),
 	)
 
+	// allocatable vs capacity
+	ic.Events = append(ic.Events,
+		fmt.Sprintf("allocatable cpu: %s  memory: %s",
+			node.Status.Allocatable.Cpu().String(),
+			node.Status.Allocatable.Memory().String(),
+		),
+	)
+
+	// warning events max 10
 	events, err := b.client.Kubernetes.CoreV1().Events("").List(ctx, metav1.ListOptions{
 		FieldSelector: fmt.Sprintf("involvedObject.name=%s", ic.ResourceName),
 	})
@@ -479,7 +518,7 @@ func (b *Builder) enrichNodeContext(ctx context.Context, ic *IssueContext) {
 }
 
 // enrichGenericContext fetches warning events for any resource
-func (b *Builder) enrichGenericContext(ctx context.Context, ic *IssueContext) {
+func (b *Builder) enrichGenericContext(ctx context.Context, ic *llm.IssueContext) {
 	events, err := b.client.Kubernetes.CoreV1().Events(ic.ResourceNamespace).List(ctx, metav1.ListOptions{
 		FieldSelector: fmt.Sprintf("involvedObject.name=%s", ic.ResourceName),
 	})
