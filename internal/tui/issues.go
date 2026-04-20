@@ -220,3 +220,39 @@ func truncate(s string, max int) string {
 	}
 	return s[:max-3] + "..."
 }
+
+// removeStaleIssues removes issues for resources no longer in snapshot
+func removeStaleIssues(issues []Issue, snapshot *model.ClusterSnapshot) []Issue {
+	// build set of existing resources
+	existing := make(map[string]bool)
+
+	for _, d := range snapshot.Deployments {
+		existing[resourceKey("deployment", d.Name, d.Namespace)] = true
+	}
+	for _, p := range snapshot.Pods {
+		if p.OwnerKind == "" {
+			existing[resourceKey("pod", p.Name, p.Namespace)] = true
+		}
+	}
+	for _, n := range snapshot.Namespaces {
+		existing[resourceKey("namespace", n.Name, n.Name)] = true
+	}
+	for _, node := range snapshot.Nodes {
+		existing[resourceKey("node", node.Name, "cluster")] = true
+	}
+	for _, pvc := range snapshot.PVCs {
+		existing[resourceKey("pvc", pvc.Name, pvc.Namespace)] = true
+	}
+	for _, ing := range snapshot.Ingresses {
+		existing[resourceKey("ingress", ing.Name, ing.Namespace)] = true
+	}
+
+	var filtered []Issue
+	for _, issue := range issues {
+		key := resourceKey(issue.ResourceType, issue.Resource, issue.Namespace)
+		if existing[key] {
+			filtered = append(filtered, issue)
+		}
+	}
+	return filtered
+}

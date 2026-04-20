@@ -174,6 +174,9 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.lastProbe = time.Now()
 		m.probeTimeMs = msg.durationMs
 
+		// remove issues for resources no longer in snapshot
+		m.issues = removeStaleIssues(m.issues, msg.snapshot)
+
 		// update resolved based on previous issues
 		// issues will be updated by LLM results
 		if len(m.issues) > 0 {
