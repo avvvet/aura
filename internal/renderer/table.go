@@ -142,7 +142,7 @@ func (r *TableRenderer) Render(snapshot *model.ClusterSnapshot) error {
 
 // renderHeader renders the brand header in a box
 func renderHeader(b *strings.Builder, s *model.ClusterSnapshot) {
-	brand := styleBrand.Render("▸  A U R A")
+	brand := styleBrand.Render("▸  S T E E R E D")
 	tagline := styleTagline.Render("light that pushes darkness")
 
 	cluster := styleBlue.Render(s.ClusterName)

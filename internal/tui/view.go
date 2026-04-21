@@ -277,7 +277,7 @@ func renderFixView(m Model) string {
 	b.WriteString("\n")
 
 	// header
-	brand := tStyleBright.Render("▸  A U R A") +
+	brand := tStyleBright.Render("▸  S T E E R E D") +
 		"  " + tStyleOk.Render("FIX GUIDANCE")
 	tagline := lipgloss.NewStyle().Foreground(tColorMuted).Italic(true).Render("the light that guides you through darkness")
 
@@ -477,7 +477,7 @@ func renderFixView(m Model) string {
 }
 
 func renderTUIHeader(m Model) string {
-	brand := tStyleBright.Render("▸  A U R A")
+	brand := tStyleBright.Render("▸  S T E E R E D")
 	tagline := lipgloss.NewStyle().Foreground(tColorMuted).Italic(true).Render("the light that guides you through darkness")
 
 	clusterName := tStyleBlue.Render(m.client.ClusterName)
