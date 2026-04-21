@@ -11,7 +11,7 @@ import (
 )
 
 const (
-	dbName        = "aura.db"
+	dbName        = "steered.db"
 	bucketConfig  = "config"
 	bucketSecrets = "secrets"
 
@@ -25,7 +25,7 @@ const (
 	DefaultKeyTTL = 24 * time.Hour
 )
 
-// Config holds all aura configuration
+// Config holds all steered configuration
 type Config struct {
 	LLMProvider   string `json:"llm_provider"`
 	LLMModel      string `json:"llm_model"`
@@ -46,7 +46,7 @@ type Manager struct {
 }
 
 // New creates a new config Manager
-// stores db at ~/.aura/aura.db
+// stores db at ~/.steered/steered.db
 func New() (*Manager, error) {
 	dir, err := auraDir()
 	if err != nil {
@@ -258,16 +258,16 @@ func (m *Manager) IsLLMConfigured() bool {
 	return cfg.LLMProvider != ""
 }
 
-// auraDir returns ~/.aura creating it if needed
+// auraDir returns ~/.steered creating it if needed
 func auraDir() (string, error) {
 	home, err := os.UserHomeDir()
 	if err != nil {
 		return "", fmt.Errorf("failed to get home dir: %w", err)
 	}
 
-	dir := filepath.Join(home, ".aura")
+	dir := filepath.Join(home, ".steered")
 	if err := os.MkdirAll(dir, 0700); err != nil {
-		return "", fmt.Errorf("failed to create .aura dir: %w", err)
+		return "", fmt.Errorf("failed to create .steered dir: %w", err)
 	}
 
 	return dir, nil

@@ -40,14 +40,14 @@ func RunSetup(m *Manager) (*SetupResult, error) {
 	reader := bufio.NewReader(os.Stdin)
 
 	fmt.Println()
-	fmt.Println("  ▸  A U R A  —  LLM Setup")
+	fmt.Println("  ▸  S T E E R E D  —  LLM Setup")
 	fmt.Println()
 	fmt.Println("  configure a language model for live cluster analysis")
 	fmt.Println("  your API key is stored locally with 24h expiry")
 	fmt.Println()
 	fmt.Println("  [1]  ollama      local, free, private, recommended")
-	fmt.Println("  [2]  openai      best quality, requires API key")
-	fmt.Println("  [3]  anthropic   best reasoning, requires API key")
+	fmt.Println("  [2]  anthropic   best reasoning, requires API key")
+	fmt.Println("  [3]  openai      best quality, requires API key")
 	fmt.Println("  [4]  skip        snapshot only, configure later")
 	fmt.Println()
 	fmt.Print("  select provider [1-4]: ")
@@ -81,29 +81,6 @@ func RunSetup(m *Manager) (*SetupResult, error) {
 		}
 
 	case "2":
-		result.Provider = ProviderOpenAI
-		result.Model = ProviderDefaults[ProviderOpenAI].Model
-		result.Endpoint = ProviderDefaults[ProviderOpenAI].Endpoint
-
-		fmt.Println()
-		fmt.Print("  enter OpenAI API key: ")
-		keyInput, _ := reader.ReadString('\n')
-		result.APIKey = strings.TrimSpace(keyInput)
-
-		if result.APIKey == "" {
-			fmt.Println("  no API key provided, skipping")
-			result.Skipped = true
-			return &result, nil
-		}
-
-		fmt.Printf("  model [%s]: ", result.Model)
-		modelInput, _ := reader.ReadString('\n')
-		modelInput = strings.TrimSpace(modelInput)
-		if modelInput != "" {
-			result.Model = modelInput
-		}
-
-	case "3":
 		result.Provider = ProviderAnthropic
 		result.Model = ProviderDefaults[ProviderAnthropic].Model
 		result.Endpoint = ProviderDefaults[ProviderAnthropic].Endpoint
@@ -126,10 +103,33 @@ func RunSetup(m *Manager) (*SetupResult, error) {
 			result.Model = modelInput
 		}
 
+	case "3":
+		result.Provider = ProviderOpenAI
+		result.Model = ProviderDefaults[ProviderOpenAI].Model
+		result.Endpoint = ProviderDefaults[ProviderOpenAI].Endpoint
+
+		fmt.Println()
+		fmt.Print("  enter OpenAI API key: ")
+		keyInput, _ := reader.ReadString('\n')
+		result.APIKey = strings.TrimSpace(keyInput)
+
+		if result.APIKey == "" {
+			fmt.Println("  no API key provided, skipping")
+			result.Skipped = true
+			return &result, nil
+		}
+
+		fmt.Printf("  model [%s]: ", result.Model)
+		modelInput, _ := reader.ReadString('\n')
+		modelInput = strings.TrimSpace(modelInput)
+		if modelInput != "" {
+			result.Model = modelInput
+		}
+
 	default:
 		result.Skipped = true
 		fmt.Println()
-		fmt.Println("  skipping LLM setup — run aura --setup to configure later")
+		fmt.Println("  skipping LLM setup — run steered --setup to configure later")
 		return &result, nil
 	}
 
@@ -154,7 +154,7 @@ func RunSetup(m *Manager) (*SetupResult, error) {
 	}
 
 	fmt.Printf("\n  ✓ configured: %s / %s\n", result.Provider, result.Model)
-	fmt.Println("  starting aura...")
+	fmt.Println("  starting steered...")
 	fmt.Println()
 
 	return &result, nil
@@ -167,7 +167,7 @@ func RenewAPIKey(m *Manager, ttl time.Duration) error {
 		return err
 	}
 	if key == "" {
-		return fmt.Errorf("no API key found — run aura --setup")
+		return fmt.Errorf("no API key found — run steered --setup")
 	}
 	return m.SaveAPIKey(key, ttl)
 }

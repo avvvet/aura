@@ -10,11 +10,11 @@ import (
 	"github.com/atotto/clipboard"
 	tea "github.com/charmbracelet/bubbletea"
 
-	"github.com/avvvet/aura/internal/client"
-	"github.com/avvvet/aura/internal/config"
-	auracontext "github.com/avvvet/aura/internal/context"
-	"github.com/avvvet/aura/internal/llm"
-	"github.com/avvvet/aura/internal/model"
+	"github.com/avvvet/steered/internal/client"
+	"github.com/avvvet/steered/internal/config"
+	auracontext "github.com/avvvet/steered/internal/context"
+	"github.com/avvvet/steered/internal/llm"
+	"github.com/avvvet/steered/internal/model"
 )
 
 const probeInterval = 30
@@ -38,7 +38,7 @@ type resourceAnalysisResult struct {
 	err    error
 }
 
-// Model is the bubbletea model for aura live TUI
+// Model is the bubbletea model for steered live TUI
 type Model struct {
 	client           *client.Client
 	snapshot         *model.ClusterSnapshot

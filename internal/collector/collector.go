@@ -3,7 +3,7 @@ package collector
 import (
 	"context"
 
-	"github.com/avvvet/aura/internal/model"
+	"github.com/avvvet/steered/internal/model"
 )
 
 // Collector defines the interface every resource collector must implement

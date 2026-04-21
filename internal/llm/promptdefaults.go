@@ -1,6 +1,6 @@
 package llm
 
-const defaultBasePrompt = `# aura base prompt
+const defaultBasePrompt = `# steered base prompt
 
 You are a senior Kubernetes engineer with 10+ years of production experience.
 Analyze these live cluster issues and provide precise, actionable guidance.

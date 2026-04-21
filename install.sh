@@ -1,8 +1,8 @@
 #!/bin/sh
 set -e
 
-REPO="avvvet/aura"
-BINARY="aura"
+REPO="avvvet/steered"
+BINARY="steered"
 INSTALL_DIR="/usr/local/bin"
 
 # detect OS
@@ -40,7 +40,7 @@ if [ -z "$VERSION" ]; then
   exit 1
 fi
 
-echo "installing aura v${VERSION} for ${OS}/${ARCH}..."
+echo "installing steered v${VERSION} for ${OS}/${ARCH}..."
 
 # download
 FILENAME="aura_${OS}_${ARCH}.tar.gz"
@@ -59,5 +59,5 @@ mv "${TMP}/${BINARY}" "${INSTALL_DIR}/${BINARY}"
 # cleanup
 rm -rf "$TMP"
 
-echo "✓ aura installed to ${INSTALL_DIR}/${BINARY}"
-echo "  run: aura"
+echo "✓ steered installed to ${INSTALL_DIR}/${BINARY}"
+echo "  run: steered"

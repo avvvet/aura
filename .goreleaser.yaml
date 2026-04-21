@@ -1,15 +1,15 @@
 version: 2
 
-project_name: aura
+project_name: steered
 
 before:
   hooks:
     - go mod tidy
 
 builds:
-  - id: aura
-    main: ./cmd/aura/
-    binary: aura
+  - id: steered
+    main: ./cmd/steered/
+    binary: steered
     env:
       - CGO_ENABLED=0
     goos:
@@ -26,7 +26,7 @@ builds:
       - -X main.date={{.Date}}
 
 archives:
-  - id: aura
+  - id: steered
     name_template: "{{ .ProjectName }}_{{ .Os }}_{{ .Arch }}"
     format_overrides:
       - goos: windows
@@ -59,7 +59,7 @@ changelog:
 release:
   github:
     owner: avvvet
-    name: aura
-  name_template: "aura v{{.Version}}"
+    name: steered
+  name_template: "steered v{{.Version}}"
   draft: false
   prerelease: auto

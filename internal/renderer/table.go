@@ -5,7 +5,7 @@ import (
 	"os"
 	"strings"
 
-	"github.com/avvvet/aura/internal/model"
+	"github.com/avvvet/steered/internal/model"
 	"github.com/charmbracelet/lipgloss"
 )
 
@@ -421,8 +421,8 @@ func renderFooter(b *strings.Builder, s *model.ClusterSnapshot) {
 	b.WriteString(styleDivider.Render(strings.Repeat("─", termWidth())))
 	b.WriteString("\n")
 
-	left := styleMuted.Render("aura v0.1.0  ·  github.com/avvvet/aura  ·  run ") +
-		styleBlue.Render("aura --help") +
+	left := styleMuted.Render("steered v0.1.0  ·  github.com/avvvet/steered  ·  run ") +
+		styleBlue.Render("steered --help") +
 		styleMuted.Render(" for options")
 	right := styleMuted.Render("collected in ") + styleOk.Render("1.2s") + styleMuted.Render("  ·  0 errors")
 

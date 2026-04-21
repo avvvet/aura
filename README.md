@@ -1,13 +1,13 @@
-## what is aura?
+## what is steered?
 
-You just joined a team, landed a contract, inherited an unknown kubernetes cluster, or need to troubleshoot fast. One command. Zero setup. aura watches your cluster live, thinks like a senior Kubernetes engineer, tells you exactly what to fix, and confirms when you fixed it.
+You just joined a team, landed a contract, inherited an unknown kubernetes cluster, or need to troubleshoot fast. One command. Zero setup. steered watches your cluster live, thinks like a senior Kubernetes engineer, tells you exactly what to fix, and confirms when you fixed it.
 
 
-# aura
+# steered
 
 > the light that guides you through darkness.
 
-`aura` is a live Kubernetes cluster intelligence tool for engineers who need the complete picture fast. No agents, no SaaS, no cloud dependency. Just run `aura` and everything becomes clear.
+`steered` is a live Kubernetes cluster intelligence tool for engineers who need the complete picture fast. No agents, no SaaS, no cloud dependency. Just run `steered` and everything becomes clear.
 
 ---
 
@@ -18,7 +18,7 @@ https://github.com/user-attachments/assets/df070b65-13b9-4b96-80ae-914ddaff48ed
 ## how it works
 
 ```
-run aura
+run steered
   ↓
 live terminal UI opens — probes cluster every 30s
   ↓
@@ -36,7 +36,7 @@ RISK   → what happens if not fixed
   ↓
 press 'esc'        → back to live view
   ↓
-aura confirms when issue is resolved  ✓
+steered confirms when issue is resolved  ✓
 ```
 
 ---
@@ -62,12 +62,12 @@ aura confirms when issue is resolved  ✓
 
 **linux / mac**
 ```bash
-curl -fsSL https://raw.githubusercontent.com/avvvet/aura/main/install.sh | sudo sh
+curl -fsSL https://raw.githubusercontent.com/avvvet/steered/main/install.sh | sudo sh
 ```
 
 **go install**
 ```bash
-go install github.com/avvvet/aura@latest
+go install github.com/avvvet/steered@latest
 ```
 
 ---
@@ -75,14 +75,14 @@ go install github.com/avvvet/aura@latest
 ## usage
 
 ```bash
-aura                        # start live cluster monitoring
-aura --context staging      # target different cluster
-aura --kubeconfig ~/my.cfg  # explicit kubeconfig
-aura --setup                # configure LLM provider
-aura --clear                # clear saved config and API keys
+steered                        # start live cluster monitoring
+steered --context staging      # target different cluster
+steered --kubeconfig ~/my.cfg  # explicit kubeconfig
+steered --setup                # configure LLM provider
+steered --clear                # clear saved config and API keys
 ```
 
-**inside aura**
+**inside steered**
 ```
 'a'      → open AI analysis view
 'esc'    → return to main view
@@ -93,7 +93,7 @@ ctrl+c   → exit
 
 ## llm setup
 
-on first run aura will ask you to configure a language model:
+on first run steered will ask you to configure a language model:
 
 ```
 [1] ollama      local, free, private, recommended
@@ -106,14 +106,14 @@ API keys are stored locally with a 24 hour expiry and never leave your machine.
 
 reconfigure anytime:
 ```bash
-aura --setup
+steered --setup
 ```
 
 ---
 
 ## how it connects
 
-aura follows the standard kubeconfig precedence — exactly like kubectl:
+steered follows the standard kubeconfig precedence — exactly like kubectl:
 
 ```
 1. --kubeconfig flag    explicit override
@@ -121,15 +121,15 @@ aura follows the standard kubeconfig precedence — exactly like kubectl:
 3. ~/.kube/config       default fallback
 ```
 
-no configuration needed. if kubectl works, aura works.
+no configuration needed. if kubectl works, steered works.
 
-aura talks directly to the Kubernetes API server using client-go — the same library kubectl uses. it is not a kubectl wrapper.
+steered talks directly to the Kubernetes API server using client-go — the same library kubectl uses. it is not a kubectl wrapper.
 
 ---
 
-## why aura?
+## why steered?
 
-| | aura | kubecost | cast.ai | k9s |
+| | steered | kubecost | cast.ai | k9s |
 |---|---|---|---|---|
 | install | single binary | helm chart | saas agent | binary |
 | live monitoring | yes | no | yes | yes |

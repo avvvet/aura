@@ -8,9 +8,9 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
-	"github.com/avvvet/aura/internal/client"
-	"github.com/avvvet/aura/internal/llm"
-	"github.com/avvvet/aura/internal/model"
+	"github.com/avvvet/steered/internal/client"
+	"github.com/avvvet/steered/internal/llm"
+	"github.com/avvvet/steered/internal/model"
 )
 
 // Builder fetches rich context per resource from the cluster

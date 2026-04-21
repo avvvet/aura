@@ -5,7 +5,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/avvvet/aura/internal/model"
+	"github.com/avvvet/steered/internal/model"
 	"github.com/charmbracelet/lipgloss"
 )
 
@@ -111,7 +111,7 @@ func renderIssuesSummary(m Model) string {
 
 	if m.analyzer == nil {
 		content := tStyleMuted.Render("⚡  configure LLM to enable AI analysis  ·  run ") +
-			tStyleBlue.Render("aura --setup")
+			tStyleBlue.Render("steered --setup")
 		b.WriteString(lipgloss.NewStyle().
 			Border(lipgloss.RoundedBorder()).
 			BorderForeground(tColorBgGrid).
@@ -676,7 +676,7 @@ func renderResolved(m Model) string {
 }
 
 func renderTUIFooter(m Model) string {
-	left := tStyleMuted.Render("aura v0.2.0  ·  github.com/avvvet/aura  ·  ") +
+	left := tStyleMuted.Render("steered v0.2.0  ·  github.com/avvvet/steered  ·  ") +
 		tStyleBlue.Render("ctrl+c") +
 		tStyleMuted.Render(" to exit")
 

@@ -10,17 +10,17 @@ import (
 var debugEnabled bool
 var debugFile *os.File
 
-// EnableDebug turns on debug logging to ~/.aura/debug.log
+// EnableDebug turns on debug logging to ~/.steered/debug.log
 func EnableDebug() {
 	debugEnabled = true
 	home, _ := os.UserHomeDir()
-	path := filepath.Join(home, ".aura", "debug.log")
+	path := filepath.Join(home, ".steered", "debug.log")
 	f, err := os.OpenFile(path, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0644)
 	if err != nil {
 		return
 	}
 	debugFile = f
-	debugLog("=== aura debug log started %s ===\n", time.Now().Format("2006-01-02 15:04:05"))
+	debugLog("=== steered debug log started %s ===\n", time.Now().Format("2006-01-02 15:04:05"))
 }
 
 func debugLog(format string, args ...interface{}) {

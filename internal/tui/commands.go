@@ -6,9 +6,9 @@ import (
 
 	tea "github.com/charmbracelet/bubbletea"
 
-	"github.com/avvvet/aura/internal/client"
-	"github.com/avvvet/aura/internal/collector"
-	"github.com/avvvet/aura/internal/model"
+	"github.com/avvvet/steered/internal/client"
+	"github.com/avvvet/steered/internal/collector"
+	"github.com/avvvet/steered/internal/model"
 )
 
 // probeDone is sent when a probe completes

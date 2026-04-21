@@ -6,7 +6,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/avvvet/aura/internal/model"
+	"github.com/avvvet/steered/internal/model"
 )
 
 // Issue represents a detected cluster issue with full analysis

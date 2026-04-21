@@ -6,7 +6,7 @@ import (
 	"strings"
 )
 
-// PromptLoader loads prompt files from ~/.aura/skills/
+// PromptLoader loads prompt files from ~/.steered/skills/
 type PromptLoader struct {
 	baseDir string
 }
@@ -15,7 +15,7 @@ type PromptLoader struct {
 func NewPromptLoader() *PromptLoader {
 	home, _ := os.UserHomeDir()
 	return &PromptLoader{
-		baseDir: filepath.Join(home, ".aura", "skills"),
+		baseDir: filepath.Join(home, ".steered", "skills"),
 	}
 }
 
@@ -63,7 +63,7 @@ func (p *PromptLoader) defaultIssuePrompt(kind string) string {
 // InstallDefaultPrompts installs default prompt files on first run
 func InstallDefaultPrompts() error {
 	home, _ := os.UserHomeDir()
-	promptDir := filepath.Join(home, ".aura", "skills", "resources")
+	promptDir := filepath.Join(home, ".steered", "skills", "resources")
 	if err := os.MkdirAll(promptDir, 0755); err != nil {
 		return err
 	}
@@ -79,7 +79,7 @@ func InstallDefaultPrompts() error {
 	}
 
 	for name, content := range files {
-		path := filepath.Join(home, ".aura", "skills", name)
+		path := filepath.Join(home, ".steered", "skills", name)
 		// never overwrite user edits
 		if _, err := os.Stat(path); os.IsNotExist(err) {
 			if err := os.WriteFile(path, []byte(content), 0644); err != nil {
