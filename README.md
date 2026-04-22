@@ -1,4 +1,4 @@
-<video controls src="/docs/steered_demo.mp4" width="320" height="240"></video>
+https://github.com/user-attachments/assets/2c3d8d5f-17d4-4d6a-8dbc-318b679b2220
 
 ## what is steered?
 
