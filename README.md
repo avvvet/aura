@@ -1,4 +1,4 @@
-<video controls src="/docs/steered_demo.mp4" title="Title"></video>
+<video controls src="/docs/steered_demo.mp4" width="320" height="240"></video>
 
 ## what is steered?
 
