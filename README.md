@@ -1,3 +1,5 @@
+<video controls src="/docs/steered_demo.mp4" title="Title"></video>
+
 ## what is steered?
 
 You just joined a team, landed a contract, inherited an unknown kubernetes cluster, or need to troubleshoot fast. One command. Zero setup. steered watches your cluster live, thinks like a senior Kubernetes engineer, tells you exactly what to fix, and confirms when you fixed it.
@@ -9,11 +11,6 @@ You just joined a team, landed a contract, inherited an unknown kubernetes clust
 
 `steered` is a live Kubernetes cluster intelligence tool for engineers who need the complete picture fast. No agents, no SaaS, no cloud dependency. Just run `steered` and everything becomes clear.
 
----
-
-https://github.com/user-attachments/assets/df070b65-13b9-4b96-80ae-914ddaff48ed
-
----
 
 ## how it works
 
