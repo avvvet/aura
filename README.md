@@ -1,4 +1,4 @@
-https://github.com/user-attachments/assets/2c3d8d5f-17d4-4d6a-8dbc-318b679b2220
+https://github.com/user-attachments/assets/51420bb5-cf55-43fa-ab88-991d38388304
 
 ## what is steered?
 
@@ -142,11 +142,13 @@ steered talks directly to the Kubernetes API server using client-go — the same
 
 ## author
 
-built by [@avvvet](https://github.com/avvvet) — Senior Golang Engineer & CKA Certified
+built by [@avvvet](https://github.com/avvvet) — Senior Golang Engineer, linux & CKA Certified
 
 > your existence alone reveals all.
 
 ---
+
+https://github.com/user-attachments/assets/2c3d8d5f-17d4-4d6a-8dbc-318b679b2220
 
 ## license
 
