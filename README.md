@@ -9,8 +9,17 @@ You just joined a team, landed a contract, inherited an unknown kubernetes clust
 
 > the light that guides you through darkness.
 
+**[steered.dev](https://steered.dev) · [install](https://steered.dev/install) · [demo](https://steered.dev/#demo)**
+
 `steered` is a live Kubernetes cluster intelligence tool for engineers who need the complete picture fast. No agents, no SaaS, no cloud dependency. Just run `steered` and everything becomes clear.
 
+
+## install
+
+**linux / mac**
+```bash
+curl -fsSL https://steered.dev/install | sudo sh
+```
 
 ## how it works
 
@@ -35,7 +44,6 @@ press 'esc'        → back to live view
   ↓
 steered confirms when issue is resolved  ✓
 ```
-
 ---
 
 ## features
@@ -55,12 +63,7 @@ steered confirms when issue is resolved  ✓
 
 ---
 
-## install
 
-**linux / mac**
-```bash
-curl -fsSL https://raw.githubusercontent.com/avvvet/steered/main/install.sh | sudo sh
-```
 
 **go install**
 ```bash
@@ -142,7 +145,7 @@ steered talks directly to the Kubernetes API server using client-go — the same
 
 ## author
 
-built by [@avvvet](https://github.com/avvvet) — Senior Golang Engineer, linux & CKA Certified
+built by [Awet Tsegazeab](https://github.com/avvvet) — Senior Golang Engineer, Linux & CKA Certified
 
 > your existence alone reveals all.
 
