@@ -1,3 +1,5 @@
+> **CLI tool · Zero config · No dependencies · No database · No cloud · If kubectl works, steered works.**
+
 https://github.com/user-attachments/assets/51420bb5-cf55-43fa-ab88-991d38388304
 
 ## what is steered?
