@@ -9,7 +9,7 @@ You just joined a team, landed a contract, inherited an unknown kubernetes clust
 
 > the light that guides you through darkness.
 
-**[steered.dev](https://steered.dev) · [install](https://steered.dev/install) · [demo](https://steered.dev/#demo)**
+**[steered.dev](https://steered.dev)  · [demo](https://steered.dev/#demo)**
 
 `steered` is a live Kubernetes cluster intelligence tool for engineers who need the complete picture fast. No agents, no SaaS, no cloud dependency. Just run `steered` and everything becomes clear.
 
@@ -21,28 +21,29 @@ You just joined a team, landed a contract, inherited an unknown kubernetes clust
 curl -fsSL https://steered.dev/install | sudo sh
 ```
 
+
 ## how it works
 
 ```
-run steered
-  ↓
-live terminal UI opens — probes cluster every 30s
-  ↓
-health grid        → complete cluster snapshot at a glance
-must fix           → critical issues with exact kubectl commands
-good practice      → recommendations to improve stability and cost
-security           → misconfigurations and vulnerabilities detected
-  ↓
-press 'a'          → AI analysis view
-  ↓
-WHY    → root cause in plain English
-ACTION → what to do, explained simply
-RUN    → exact kubectl command to fix
-RISK   → what happens if not fixed
-  ↓
-press 'esc'        → back to live view
-  ↓
-steered confirms when issue is resolved  ✓
+$ steered
+
+  live view loads. your cluster, fully mapped.
+  health score updates every 30 seconds.
+
+  must fix      — things breaking right now, with exact commands
+  good practice — what will hurt you later
+  security      — what you should not have left open
+
+  hit 'a' when you want to understand why
+
+    WHY    the root cause, no jargon
+    ACTION what to do about it
+    RUN    the exact command, ready to copy
+    RISK   what happens if you ignore it
+
+  hit 'esc' to go back to the live view
+
+  when you fix something, steered notices.  ✓
 ```
 ---
 
