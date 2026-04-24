@@ -43,7 +43,7 @@ fi
 echo "installing steered v${VERSION} for ${OS}/${ARCH}..."
 
 # download
-FILENAME="aura_${OS}_${ARCH}.tar.gz"
+FILENAME="steered_${OS}_${ARCH}.tar.gz"
 URL="https://github.com/${REPO}/releases/download/v${VERSION}/${FILENAME}"
 
 TMP=$(mktemp -d)
